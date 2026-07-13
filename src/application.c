@@ -180,9 +180,33 @@ os_error *imgorg_application_run(imgorg_application *application)
     }
 
     while (!application->quit && error == NULL) {
-        event = wimp_poll(wimp_MASK_NULL, &block, NULL);
+        if (application->browser.dragging) {
+            os_t now;
+
+            error = xos_read_monotonic_time(&now);
+            if (error == NULL) {
+                error = xwimp_poll_idle(
+                    0,
+                    &block,
+                    now + 2,
+                    NULL,
+                    &event
+                );
+            }
+            if (error != NULL) {
+                break;
+            }
+        } else {
+            event = wimp_poll(wimp_MASK_NULL, &block, NULL);
+        }
 
         switch (event) {
+        case wimp_NULL_REASON_CODE:
+            error = imgorg_browser_window_handle_drag_update(
+                &application->browser
+            );
+            break;
+
         case wimp_REDRAW_WINDOW_REQUEST:
             error = imgorg_browser_window_redraw(
                 &application->browser,

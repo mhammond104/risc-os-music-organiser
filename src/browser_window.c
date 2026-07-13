@@ -27,6 +27,10 @@ enum {
 
 static os_error browser_error;
 
+static os_error *imgorg_browser_window_update_drag(
+    const imgorg_browser_window *browser
+);
+
 static os_error *imgorg_browser_window_error(const char *message)
 {
     browser_error.errnum = 0x80F001;
@@ -267,7 +271,7 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     definition.title_fg = wimp_COLOUR_BLACK;
     definition.title_bg = wimp_COLOUR_LIGHT_GREY;
     definition.work_fg = wimp_COLOUR_BLACK;
-    definition.work_bg = wimp_COLOUR_VERY_LIGHT_GREY;
+    definition.work_bg = wimp_COLOUR_WHITE;
     definition.scroll_outer = wimp_COLOUR_MID_LIGHT_GREY;
     definition.scroll_inner = wimp_COLOUR_VERY_LIGHT_GREY;
     definition.highlight_bg = wimp_COLOUR_CREAM;
@@ -528,7 +532,40 @@ os_error *imgorg_browser_window_handle_drag_end(
         dragged->final.x0 - browser->drag_start.x;
     browser->pan_y = browser->drag_pan_y +
         dragged->final.y0 - browser->drag_start.y;
-    return imgorg_browser_window_redraw_all(browser);
+    return imgorg_browser_window_update_drag(browser);
+}
+
+os_error *imgorg_browser_window_handle_drag_update(
+    imgorg_browser_window *browser
+)
+{
+    wimp_pointer pointer;
+    os_error *error;
+    int pan_x;
+    int pan_y;
+
+    if (browser == NULL || !browser->dragging) {
+        return NULL;
+    }
+
+    error = xwimp_get_pointer_info(&pointer);
+    if (error != NULL) {
+        return error;
+    }
+
+    if ((pointer.buttons & wimp_CLICK_SELECT) == 0) {
+        return NULL;
+    }
+
+    pan_x = browser->drag_pan_x + pointer.pos.x - browser->drag_start.x;
+    pan_y = browser->drag_pan_y + pointer.pos.y - browser->drag_start.y;
+    if (pan_x == browser->pan_x && pan_y == browser->pan_y) {
+        return NULL;
+    }
+
+    browser->pan_x = pan_x;
+    browser->pan_y = pan_y;
+    return imgorg_browser_window_update_drag(browser);
 }
 
 os_error *imgorg_browser_window_handle_scroll(
@@ -573,6 +610,165 @@ os_error *imgorg_browser_window_handle_scroll(
     );
 }
 
+static os_error *imgorg_browser_window_plot_image(
+    const imgorg_browser_window *browser,
+    const wimp_draw *draw,
+    os_box *image_box
+)
+{
+    int x_eigen;
+    int y_eigen;
+    int available_width;
+    int available_height;
+    int target_width;
+    int target_height;
+    os_factors factors;
+
+    imgorg_browser_window_read_eigen_factors(&x_eigen, &y_eigen);
+
+    if (browser->fit_to_window) {
+        available_width =
+            (draw->box.x1 - draw->box.x0 - (2 * IMAGE_BORDER)) >> x_eigen;
+        available_height =
+            (draw->box.y1 - draw->box.y0 - (2 * IMAGE_BORDER)) >> y_eigen;
+
+        if ((long long) available_width * browser->image_height <=
+            (long long) available_height * browser->image_width) {
+            target_width = available_width;
+            target_height = (int) (
+                (long long) browser->image_height * target_width /
+                browser->image_width
+            );
+        } else {
+            target_height = available_height;
+            target_width = (int) (
+                (long long) browser->image_width * target_height /
+                browser->image_height
+            );
+        }
+    } else {
+        target_width = (int) (
+            (long long) browser->image_width * browser->zoom_percent / 100
+        );
+        target_height = (int) (
+            (long long) browser->image_height * browser->zoom_percent / 100
+        );
+    }
+
+    if (target_width <= 0 || target_height <= 0) {
+        memset(image_box, 0, sizeof(*image_box));
+        return NULL;
+    }
+
+    factors.xmul = target_width;
+    factors.ymul = target_height;
+    factors.xdiv = browser->image_width;
+    factors.ydiv = browser->image_height;
+
+    image_box->x0 = draw->box.x0 +
+        ((draw->box.x1 - draw->box.x0 -
+          (target_width << x_eigen)) / 2) + browser->pan_x;
+    image_box->y0 = draw->box.y0 +
+        ((draw->box.y1 - draw->box.y0 -
+          (target_height << y_eigen)) / 2) + browser->pan_y;
+    image_box->x1 = image_box->x0 + (target_width << x_eigen);
+    image_box->y1 = image_box->y0 + (target_height << y_eigen);
+
+    return xosspriteop_put_sprite_scaled(
+        osspriteop_PTR,
+        browser->image_sprite_area,
+        (osspriteop_id) browser->image_sprite,
+        image_box->x0,
+        image_box->y0,
+        os_ACTION_OVERWRITE,
+        &factors,
+        NULL
+    );
+}
+
+static void imgorg_browser_window_fill_box(const os_box *box)
+{
+    if (box->x0 >= box->x1 || box->y0 >= box->y1) {
+        return;
+    }
+
+    os_plot(os_MOVE_TO, box->x0, box->y0);
+    os_plot(
+        os_PLOT_RECTANGLE | os_PLOT_TO,
+        box->x1 - 1,
+        box->y1 - 1
+    );
+}
+
+static void imgorg_browser_window_clear_around_image(
+    const os_box *visible,
+    const os_box *image
+)
+{
+    os_box box;
+    int middle_x0 = image->x0 > visible->x0 ? image->x0 : visible->x0;
+    int middle_x1 = image->x1 < visible->x1 ? image->x1 : visible->x1;
+
+    (void) colourtrans_set_gcol(
+        os_COLOUR_WHITE,
+        0,
+        os_ACTION_OVERWRITE,
+        NULL
+    );
+
+    box.x0 = visible->x0;
+    box.y0 = visible->y0;
+    box.x1 = image->x0 < visible->x1 ? image->x0 : visible->x1;
+    box.y1 = visible->y1;
+    imgorg_browser_window_fill_box(&box);
+
+    box.x0 = image->x1 > visible->x0 ? image->x1 : visible->x0;
+    box.x1 = visible->x1;
+    imgorg_browser_window_fill_box(&box);
+
+    box.x0 = middle_x0;
+    box.x1 = middle_x1;
+    box.y0 = visible->y0;
+    box.y1 = image->y0 < visible->y1 ? image->y0 : visible->y1;
+    imgorg_browser_window_fill_box(&box);
+
+    box.y0 = image->y1 > visible->y0 ? image->y1 : visible->y0;
+    box.y1 = visible->y1;
+    imgorg_browser_window_fill_box(&box);
+}
+
+static os_error *imgorg_browser_window_update_drag(
+    const imgorg_browser_window *browser
+)
+{
+    wimp_draw update;
+    osbool more;
+    os_error *error;
+
+    memset(&update, 0, sizeof(update));
+    update.w = browser->handle;
+    update.box.x0 = 0;
+    update.box.y0 = -2048;
+    update.box.x1 = 2048;
+    update.box.y1 = 0;
+
+    error = xwimp_update_window(&update, &more);
+    while (error == NULL && more) {
+        os_box image_box;
+
+        error = imgorg_browser_window_plot_image(browser, &update, &image_box);
+        if (error == NULL) {
+            imgorg_browser_window_clear_around_image(
+                &update.box,
+                &image_box
+            );
+            error = xwimp_get_rectangle(&update, &more);
+        }
+    }
+
+    return error;
+}
+
 os_error *imgorg_browser_window_redraw(
     const imgorg_browser_window *browser,
     wimp_draw *redraw
@@ -588,75 +784,13 @@ os_error *imgorg_browser_window_redraw(
     error = xwimp_redraw_window(redraw, &more);
     while (error == NULL && more) {
         if (browser->image_sprite_area != NULL) {
-            int x_eigen;
-            int y_eigen;
-            int available_width;
-            int available_height;
-            int target_width;
-            int target_height;
-            int x;
-            int y;
-            os_factors factors;
+            os_box image_box;
 
-            imgorg_browser_window_read_eigen_factors(&x_eigen, &y_eigen);
-
-            if (browser->fit_to_window) {
-                available_width =
-                    (redraw->box.x1 - redraw->box.x0 -
-                     (2 * IMAGE_BORDER)) >> x_eigen;
-                available_height =
-                    (redraw->box.y1 - redraw->box.y0 -
-                     (2 * IMAGE_BORDER)) >> y_eigen;
-
-                if ((long long) available_width * browser->image_height <=
-                    (long long) available_height * browser->image_width) {
-                    target_width = available_width;
-                    target_height = (int) (
-                        (long long) browser->image_height * target_width /
-                        browser->image_width
-                    );
-                } else {
-                    target_height = available_height;
-                    target_width = (int) (
-                        (long long) browser->image_width * target_height /
-                        browser->image_height
-                    );
-                }
-            } else {
-                target_width = (int) (
-                    (long long) browser->image_width *
-                    browser->zoom_percent / 100
-                );
-                target_height = (int) (
-                    (long long) browser->image_height *
-                    browser->zoom_percent / 100
-                );
-            }
-
-            if (target_width > 0 && target_height > 0) {
-                factors.xmul = target_width;
-                factors.ymul = target_height;
-                factors.xdiv = browser->image_width;
-                factors.ydiv = browser->image_height;
-
-                x = redraw->box.x0 +
-                    ((redraw->box.x1 - redraw->box.x0 -
-                      (target_width << x_eigen)) / 2) + browser->pan_x;
-                y = redraw->box.y0 +
-                    ((redraw->box.y1 - redraw->box.y0 -
-                      (target_height << y_eigen)) / 2) + browser->pan_y;
-
-                error = xosspriteop_put_sprite_scaled(
-                    osspriteop_PTR,
-                    browser->image_sprite_area,
-                    (osspriteop_id) browser->image_sprite,
-                    x,
-                    y,
-                    os_ACTION_OVERWRITE,
-                    &factors,
-                    NULL
-                );
-            }
+            error = imgorg_browser_window_plot_image(
+                browser,
+                redraw,
+                &image_box
+            );
         } else {
             int origin_x = redraw->box.x0 - redraw->xscroll;
             int origin_y = redraw->box.y1 - redraw->yscroll;

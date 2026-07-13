@@ -41,6 +41,9 @@ os_error *imgorg_browser_window_handle_drag_end(
     imgorg_browser_window *browser,
     const wimp_dragged *dragged
 );
+os_error *imgorg_browser_window_handle_drag_update(
+    imgorg_browser_window *browser
+);
 os_error *imgorg_browser_window_handle_scroll(
     imgorg_browser_window *browser,
     const wimp_scroll *scroll

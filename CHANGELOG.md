@@ -14,4 +14,5 @@
 - Initial architecture and development roadmap.
 - Iconbar menu with a Quit command.
 - Drag-and-drop loading and fit-to-window display of a single PNG image.
-- Mouse-wheel zoom, Select-drag panning and Adjust-click fit-to-window reset.
+- Mouse-wheel zoom, smooth Select-drag panning and Adjust-click fit-to-window
+  reset.

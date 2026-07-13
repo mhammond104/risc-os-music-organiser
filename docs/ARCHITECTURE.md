@@ -22,7 +22,9 @@ and pointer interaction. It decodes one dropped PNG through libpng, retains the
 result as a 32-bpp RISC OS sprite and plots it fit-to-window through core
 SpriteOp calls; otherwise it draws a placeholder cell. Viewer state stores a
 bounded zoom percentage and screen-coordinate pan offset, with Wimp scroll and
-drag events driving those controls.
+drag events driving those controls. While a pan drag is active, timed idle polls
+sample the pointer and use immediate, non-clearing Wimp update loops so the image
+follows the mouse continuously without flashing the window background first.
 
 ### Collection model
 
