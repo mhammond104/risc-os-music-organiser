@@ -26,6 +26,10 @@ static wimp_MENU(1) imgorg_iconbar_menu = {
     }
 };
 
+static const wimp_MESSAGE_LIST(3) imgorg_messages = {
+    {message_DATA_LOAD, message_QUIT, 0}
+};
+
 static os_error *imgorg_application_create_iconbar_icon(
     imgorg_application *application
 )
@@ -91,6 +95,47 @@ static void imgorg_application_handle_message(
     }
 }
 
+static os_error *imgorg_application_handle_data_load(
+    imgorg_application *application,
+    wimp_message *message
+)
+{
+    wimp_message_data_xfer *transfer = &message->data.data_xfer;
+    os_error *error;
+
+    if (!((transfer->w == wimp_ICON_BAR &&
+           transfer->i == application->iconbar_icon) ||
+          transfer->w == application->browser.handle)) {
+        return NULL;
+    }
+
+    error = imgorg_browser_window_load_png(
+        &application->browser,
+        transfer->file_name
+    );
+    if (error != NULL) {
+        (void) wimp_report_error(
+            error,
+            wimp_ERROR_BOX_OK_ICON,
+            "Image Organiser"
+        );
+        return NULL;
+    }
+
+    message->action = message_DATA_LOAD_ACK;
+    message->your_ref = message->my_ref;
+    error = xwimp_send_message(
+        wimp_USER_MESSAGE,
+        message,
+        message->sender
+    );
+    if (error != NULL) {
+        return error;
+    }
+
+    return imgorg_browser_window_open(&application->browser);
+}
+
 os_error *imgorg_application_initialise(imgorg_application *application)
 {
     os_error *error;
@@ -105,7 +150,7 @@ os_error *imgorg_application_initialise(imgorg_application *application)
     error = xwimp_initialise(
         wimp_VERSION_RO3,
         "Image Organiser",
-        NULL,
+        (wimp_message_list *) &imgorg_messages,
         NULL,
         &application->task_handle
     );
@@ -165,7 +210,14 @@ os_error *imgorg_application_run(imgorg_application *application)
 
         case wimp_USER_MESSAGE:
         case wimp_USER_MESSAGE_RECORDED:
-            imgorg_application_handle_message(application, &block.message);
+            if (block.message.action == message_DATA_LOAD) {
+                error = imgorg_application_handle_data_load(
+                    application,
+                    &block.message
+                );
+            } else {
+                imgorg_application_handle_message(application, &block.message);
+            }
             break;
 
         default:

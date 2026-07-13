@@ -7,7 +7,7 @@
 - [x] browser window shell
 - [x] redraw loop
 - [x] portable image-list model
-- [ ] iconbar menu
+- [x] iconbar menu
 - [ ] application sprites
 - [ ] directory drag-and-drop
 - [ ] incremental directory enumeration
@@ -17,7 +17,7 @@
 
 - Sprite loading
 - JPEG decoding
-- PNG decoding
+- PNG decoding (single-image preview complete)
 - progressive thumbnail queue
 - memory thumbnail store
 - persistent thumbnail cache

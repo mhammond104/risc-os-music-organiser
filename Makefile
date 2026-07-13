@@ -2,7 +2,7 @@ CC := arm-unknown-riscos-gcc
 CPPFLAGS := -Iinclude -I$(GCCSDK_INSTALL_ENV)/include
 CFLAGS ?= -O2 -Wall -Wextra -pedantic -std=c11
 LDFLAGS ?= -L$(GCCSDK_INSTALL_ENV)/lib
-LDLIBS ?= -lOSLib32
+LDLIBS ?= -lpng16 -lz -lOSLib32
 
 BUILD_DIR := build/riscos
 TARGET := app/!ImgOrg/!RunImage

@@ -12,3 +12,5 @@
 - Host-side unit tests.
 - RISC OS `!Boot` and `!Run` launch files.
 - Initial architecture and development roadmap.
+- Iconbar menu with a Quit command.
+- Drag-and-drop loading and fit-to-window display of a single PNG image.

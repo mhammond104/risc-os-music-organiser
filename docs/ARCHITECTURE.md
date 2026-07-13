@@ -18,7 +18,9 @@ between polls.
 ### Browser window
 
 `browser_window.c` owns the thumbnail-window state, redraw processing, scrolling
-and pointer interaction. The current implementation draws a placeholder cell.
+and pointer interaction. It decodes one dropped PNG through libpng, retains the
+result as a 32-bpp RISC OS sprite and plots it fit-to-window through core
+SpriteOp calls; otherwise it draws a placeholder cell.
 
 ### Collection model
 

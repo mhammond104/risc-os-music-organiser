@@ -8,14 +8,17 @@ This repository contains the first application milestone:
 
 - native OSLib Wimp application
 - iconbar icon
+- iconbar menu with Quit
 - browser window shell
+- drag-and-drop loading and fit-to-window display of one PNG image
 - clean `Message_Quit` handling
 - portable image-list and directory-entry model
 - host-side unit tests for the portable model
 - RISC OS application-directory packaging
 
-No image decoder is included yet. The next milestone is directory drag-and-drop,
-directory enumeration, and placeholder thumbnail cells.
+PNG display is decoded by the statically linked libpng library and plotted as a
+native RISC OS sprite. The next milestone is directory drag-and-drop, directory
+enumeration, and placeholder thumbnail cells.
 
 ## Intended features
 
@@ -49,6 +52,7 @@ For a RISC OS build:
 
 - GCCSDK cross-compiler
 - OSLib
+- libpng 1.6 and zlib built for the GCCSDK environment
 - GNU Make
 
 The Makefile assumes the compiler is available as:
@@ -87,6 +91,12 @@ app/!ImgOrg/!RunImage
 Copy the complete `app/!ImgOrg` directory to a RISC OS filesystem preserving
 RISC OS filetypes. How filetypes are represented depends on the transfer method
 and emulator/tooling in use.
+
+## Open a PNG
+
+Launch Image Organiser, then drag a PNG file onto either its iconbar icon or its
+browser window. The image is loaded into memory and scaled to fit the window.
+Dropping another PNG replaces the current image.
 
 ## Run portable tests
 
