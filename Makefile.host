@@ -1,0 +1,23 @@
+CC ?= cc
+CPPFLAGS := -Iinclude
+CFLAGS ?= -O2 -Wall -Wextra -Wpedantic -std=c11
+
+BUILD_DIR := build/host
+TEST_TARGET := $(BUILD_DIR)/test_image_list
+
+TEST_SOURCES := \
+	tests/test_image_list.c \
+	src/image_entry.c \
+	src/image_list.c
+
+.PHONY: test clean
+
+test: $(TEST_TARGET)
+	$(TEST_TARGET)
+
+$(TEST_TARGET): $(TEST_SOURCES)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_SOURCES) -o $@
+
+clean:
+	rm -rf $(BUILD_DIR)

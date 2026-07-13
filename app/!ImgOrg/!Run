@@ -1,0 +1,3 @@
+Set ImgOrg$Dir <Obey$Dir>
+WimpSlot -min 2048K -max 128M
+Run <ImgOrg$Dir>.!RunImage

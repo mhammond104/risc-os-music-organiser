@@ -1,0 +1,10 @@
+Image Organiser
+===============
+
+This is the RISC OS application directory.
+
+The current build is an early application shell. Click its iconbar icon to
+open the browser window. Quit it from the Task Manager.
+
+A future build will include a proper sprite icon, directory drag-and-drop,
+thumbnail browsing and image viewing.

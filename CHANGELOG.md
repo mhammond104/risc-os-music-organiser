@@ -1,0 +1,14 @@
+# Changelog
+
+## Unreleased
+
+### Added
+
+- Initial OSLib Wimp application shell.
+- Text icon on the RISC OS iconbar.
+- Browser window shell opened from the iconbar.
+- Clean handling of `Message_Quit`.
+- Portable image-entry and image-list modules.
+- Host-side unit tests.
+- RISC OS `!Boot` and `!Run` launch files.
+- Initial architecture and development roadmap.

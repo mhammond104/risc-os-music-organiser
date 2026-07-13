@@ -3,6 +3,8 @@ build/
 obj/
 *.o
 *.d
+*.zip
+app/!ImgOrg/!RunImage
 
 # Host-side test outputs
 test-results/
