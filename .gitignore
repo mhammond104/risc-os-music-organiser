@@ -1,0 +1,14 @@
+# Build outputs
+build/
+obj/
+*.o
+*.d
+
+# Host-side test outputs
+test-results/
+
+# Editor and operating-system files
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store
