@@ -112,12 +112,60 @@ static os_error *imgorg_browser_window_redraw_all(
     return xwimp_force_redraw(browser->handle, 0, -2048, 2048, 0);
 }
 
+static os_error *imgorg_browser_window_update_title(
+    imgorg_browser_window *browser
+)
+{
+    if (browser->image_name[0] == '\0') {
+        snprintf(browser->title, sizeof(browser->title), "Image Organiser");
+    } else if (browser->fit_to_window) {
+        snprintf(
+            browser->title,
+            sizeof(browser->title),
+            "%s - Fit",
+            browser->image_name
+        );
+    } else {
+        snprintf(
+            browser->title,
+            sizeof(browser->title),
+            "%s - %d%%",
+            browser->image_name,
+            browser->zoom_percent
+        );
+    }
+
+    if (browser->created) {
+        return xwimp_force_redraw_title(browser->handle);
+    }
+
+    return NULL;
+}
+
+static void imgorg_browser_window_set_image_name(
+    imgorg_browser_window *browser,
+    const char *file_name
+)
+{
+    const char *cursor;
+    const char *leaf = file_name;
+
+    for (cursor = file_name; *cursor != '\0'; ++cursor) {
+        if (*cursor == '.' || *cursor == ':') {
+            leaf = cursor + 1;
+        }
+    }
+
+    snprintf(browser->image_name, sizeof(browser->image_name), "%s", leaf);
+}
+
 static os_error *imgorg_browser_window_apply_zoom(
     imgorg_browser_window *browser,
     const os_box *visible,
     bool zoom_in
 )
 {
+    os_error *error;
     int zoom = browser->fit_to_window ?
         imgorg_browser_window_fit_zoom(browser, visible) :
         browser->zoom_percent;
@@ -136,6 +184,10 @@ static os_error *imgorg_browser_window_apply_zoom(
 
     browser->fit_to_window = false;
     browser->zoom_percent = zoom;
+    error = imgorg_browser_window_update_title(browser);
+    if (error != NULL) {
+        return error;
+    }
     return imgorg_browser_window_redraw_all(browser);
 }
 
@@ -248,6 +300,7 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
 
     memset(browser, 0, sizeof(*browser));
     memset(&definition, 0, sizeof(definition));
+    (void) imgorg_browser_window_update_title(browser);
 
     definition.visible.x0 = 128;
     definition.visible.y0 = 128;
@@ -294,9 +347,9 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     definition.xmin = 320;
     definition.ymin = 240;
 
-    definition.title_data.indirected_text.text = "Image Organiser";
+    definition.title_data.indirected_text.text = browser->title;
     definition.title_data.indirected_text.validation = (char *) -1;
-    definition.title_data.indirected_text.size = 16;
+    definition.title_data.indirected_text.size = sizeof(browser->title);
 
     definition.icon_count = 0;
 
@@ -448,8 +501,13 @@ os_error *imgorg_browser_window_load_png(
     browser->zoom_percent = 100;
     browser->pan_x = 0;
     browser->pan_y = 0;
+    imgorg_browser_window_set_image_name(browser, file_name);
 
     if (browser->created) {
+        os_error *error = imgorg_browser_window_update_title(browser);
+        if (error != NULL) {
+            return error;
+        }
         return imgorg_browser_window_redraw_all(browser);
     }
 
@@ -472,9 +530,15 @@ os_error *imgorg_browser_window_handle_pointer(
     }
 
     if ((pointer->buttons & wimp_CLICK_ADJUST) != 0) {
+        os_error *title_error;
+
         browser->fit_to_window = true;
         browser->pan_x = 0;
         browser->pan_y = 0;
+        title_error = imgorg_browser_window_update_title(browser);
+        if (title_error != NULL) {
+            return title_error;
+        }
         return imgorg_browser_window_redraw_all(browser);
     }
 
@@ -494,6 +558,10 @@ os_error *imgorg_browser_window_handle_pointer(
             &state.visible
         );
         browser->fit_to_window = false;
+        error = imgorg_browser_window_update_title(browser);
+        if (error != NULL) {
+            return error;
+        }
     }
 
     memset(&drag, 0, sizeof(drag));

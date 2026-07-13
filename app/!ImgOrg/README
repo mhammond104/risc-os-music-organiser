@@ -7,7 +7,7 @@ Click its iconbar icon to open the browser window, or drag a PNG file onto the
 icon or window to display it. Use the iconbar menu to quit the application.
 
 Use the mouse wheel over the image to zoom, Select-drag to pan and Adjust-click
-to return to fit-to-window.
+to return to fit-to-window. The window title shows the image name and zoom.
 
 A future build will include a proper sprite icon, directory drag-and-drop and
 thumbnail browsing.

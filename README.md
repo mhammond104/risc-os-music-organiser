@@ -96,7 +96,8 @@ and emulator/tooling in use.
 
 Launch Image Organiser, then drag a PNG file onto either its iconbar icon or its
 browser window. The image is loaded into memory and scaled to fit the window.
-Dropping another PNG replaces the current image.
+Dropping another PNG replaces the current image. The window title shows the
+image name and the current zoom percentage, or `Fit` in fit-to-window mode.
 
 With an image open:
 

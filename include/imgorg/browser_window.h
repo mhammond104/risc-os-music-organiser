@@ -8,6 +8,8 @@
 typedef struct imgorg_browser_window {
     wimp_w handle;
     bool created;
+    char title[160];
+    char image_name[112];
     osspriteop_area *image_sprite_area;
     osspriteop_header *image_sprite;
     int image_width;

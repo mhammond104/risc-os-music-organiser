@@ -16,3 +16,4 @@
 - Drag-and-drop loading and fit-to-window display of a single PNG image.
 - Mouse-wheel zoom, smooth Select-drag panning and Adjust-click fit-to-window
   reset.
+- Dynamic viewer titles showing the image name and zoom state.
