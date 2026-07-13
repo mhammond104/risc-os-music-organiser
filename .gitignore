@@ -5,6 +5,7 @@ obj/
 *.d
 *.zip
 app/!ImgOrg/!RunImage
+tools/bin/
 
 # Host-side test outputs
 test-results/

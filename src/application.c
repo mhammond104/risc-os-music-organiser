@@ -82,7 +82,10 @@ static os_error *imgorg_application_handle_mouse_click(
         }
     }
 
-    return NULL;
+    return imgorg_browser_window_handle_pointer(
+        &application->browser,
+        pointer
+    );
 }
 
 static void imgorg_application_handle_message(
@@ -188,8 +191,19 @@ os_error *imgorg_application_run(imgorg_application *application)
             break;
 
         case wimp_OPEN_WINDOW_REQUEST:
-            error = xwimp_open_window(&block.open);
+        {
+            bool handled = false;
+
+            error = imgorg_browser_window_handle_open_request(
+                &application->browser,
+                &block.open,
+                &handled
+            );
+            if (error == NULL && !handled) {
+                error = xwimp_open_window(&block.open);
+            }
             break;
+        }
 
         case wimp_CLOSE_WINDOW_REQUEST:
             error = xwimp_close_window(block.close.w);
@@ -199,6 +213,20 @@ os_error *imgorg_application_run(imgorg_application *application)
             error = imgorg_application_handle_mouse_click(
                 application,
                 &block.pointer
+            );
+            break;
+
+        case wimp_USER_DRAG_BOX:
+            error = imgorg_browser_window_handle_drag_end(
+                &application->browser,
+                &block.dragged
+            );
+            break;
+
+        case wimp_SCROLL_REQUEST:
+            error = imgorg_browser_window_handle_scroll(
+                &application->browser,
+                &block.scroll
             );
             break;
 

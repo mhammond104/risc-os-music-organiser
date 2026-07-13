@@ -20,7 +20,9 @@ between polls.
 `browser_window.c` owns the thumbnail-window state, redraw processing, scrolling
 and pointer interaction. It decodes one dropped PNG through libpng, retains the
 result as a 32-bpp RISC OS sprite and plots it fit-to-window through core
-SpriteOp calls; otherwise it draws a placeholder cell.
+SpriteOp calls; otherwise it draws a placeholder cell. Viewer state stores a
+bounded zoom percentage and screen-coordinate pan offset, with Wimp scroll and
+drag events driving those controls.
 
 ### Collection model
 

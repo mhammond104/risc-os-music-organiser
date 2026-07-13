@@ -26,8 +26,8 @@
 ## 0.3 — viewer
 
 - separate image windows
-- fit-to-window and actual-size modes
-- zoom and pan
+- fit-to-window mode (single-image preview complete)
+- zoom and pan (single-image preview complete)
 - previous/next navigation
 - rotate for display
 - reveal in Filer

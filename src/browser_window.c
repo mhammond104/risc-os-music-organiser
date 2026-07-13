@@ -20,7 +20,9 @@ enum {
     MAXIMUM_PNG_SIZE = 64 * 1024 * 1024,
     MAXIMUM_IMAGE_DIMENSION = 8192,
     IMAGE_BORDER = 32,
-    SPRITE_DPI = 90
+    SPRITE_DPI = 90,
+    MINIMUM_ZOOM_PERCENT = 10,
+    MAXIMUM_ZOOM_PERCENT = 800
 };
 
 static os_error browser_error;
@@ -43,6 +45,94 @@ static osspriteop_mode_word imgorg_browser_window_sprite_mode(void)
         (SPRITE_DPI << osspriteop_XRES_SHIFT) |
         (SPRITE_DPI << osspriteop_YRES_SHIFT) |
         (osspriteop_TYPE32BPP << osspriteop_TYPE_SHIFT);
+}
+
+static void imgorg_browser_window_read_eigen_factors(
+    int *x_eigen,
+    int *y_eigen
+)
+{
+    *x_eigen = 1;
+    *y_eigen = 1;
+    (void) xos_read_mode_variable(
+        os_CURRENT_MODE,
+        os_MODEVAR_XEIG_FACTOR,
+        x_eigen,
+        NULL
+    );
+    (void) xos_read_mode_variable(
+        os_CURRENT_MODE,
+        os_MODEVAR_YEIG_FACTOR,
+        y_eigen,
+        NULL
+    );
+}
+
+static int imgorg_browser_window_fit_zoom(
+    const imgorg_browser_window *browser,
+    const os_box *visible
+)
+{
+    int x_eigen;
+    int y_eigen;
+    int available_width;
+    int available_height;
+    int x_percent;
+    int y_percent;
+
+    if (browser->image_width <= 0 || browser->image_height <= 0) {
+        return 100;
+    }
+
+    imgorg_browser_window_read_eigen_factors(&x_eigen, &y_eigen);
+    available_width =
+        (visible->x1 - visible->x0 - (2 * IMAGE_BORDER)) >> x_eigen;
+    available_height =
+        (visible->y1 - visible->y0 - (2 * IMAGE_BORDER)) >> y_eigen;
+
+    if (available_width <= 0 || available_height <= 0) {
+        return MINIMUM_ZOOM_PERCENT;
+    }
+
+    x_percent = (int) ((long long) available_width * 100 /
+                       browser->image_width);
+    y_percent = (int) ((long long) available_height * 100 /
+                       browser->image_height);
+    return x_percent < y_percent ? x_percent : y_percent;
+}
+
+static os_error *imgorg_browser_window_redraw_all(
+    const imgorg_browser_window *browser
+)
+{
+    return xwimp_force_redraw(browser->handle, 0, -2048, 2048, 0);
+}
+
+static os_error *imgorg_browser_window_apply_zoom(
+    imgorg_browser_window *browser,
+    const os_box *visible,
+    bool zoom_in
+)
+{
+    int zoom = browser->fit_to_window ?
+        imgorg_browser_window_fit_zoom(browser, visible) :
+        browser->zoom_percent;
+
+    if (zoom_in) {
+        zoom = (zoom * 5 + 3) / 4;
+    } else {
+        zoom = (zoom * 4) / 5;
+    }
+
+    if (zoom < MINIMUM_ZOOM_PERCENT) {
+        zoom = MINIMUM_ZOOM_PERCENT;
+    } else if (zoom > MAXIMUM_ZOOM_PERCENT) {
+        zoom = MAXIMUM_ZOOM_PERCENT;
+    }
+
+    browser->fit_to_window = false;
+    browser->zoom_percent = zoom;
+    return imgorg_browser_window_redraw_all(browser);
 }
 
 static osspriteop_area *imgorg_browser_window_decode_png(
@@ -170,6 +260,7 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
         wimp_WINDOW_TITLE_ICON |
         wimp_WINDOW_TOGGLE_ICON |
         wimp_WINDOW_SIZE_ICON |
+        wimp_WINDOW_SCROLL |
         wimp_WINDOW_VSCROLL |
         wimp_WINDOW_NEW_FORMAT;
 
@@ -180,6 +271,7 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     definition.scroll_outer = wimp_COLOUR_MID_LIGHT_GREY;
     definition.scroll_inner = wimp_COLOUR_VERY_LIGHT_GREY;
     definition.highlight_bg = wimp_COLOUR_CREAM;
+    definition.extra_flags = wimp_WINDOW_USE_EXTENDED_SCROLL_REQUEST;
 
     definition.extent.x0 = 0;
     definition.extent.y0 = -2048;
@@ -229,6 +321,45 @@ os_error *imgorg_browser_window_open(imgorg_browser_window *browser)
 
     state.next = wimp_TOP;
     return xwimp_open_window((wimp_open *) &state);
+}
+
+os_error *imgorg_browser_window_handle_open_request(
+    imgorg_browser_window *browser,
+    const wimp_open *open,
+    bool *handled
+)
+{
+    wimp_window_state state;
+    os_error *error;
+
+    if (handled != NULL) {
+        *handled = false;
+    }
+
+    if (browser == NULL || open == NULL || handled == NULL ||
+        open->w != browser->handle ||
+        browser->image_sprite_area == NULL) {
+        return NULL;
+    }
+
+    state.w = browser->handle;
+    error = xwimp_get_window_state(&state);
+    if (error != NULL) {
+        return error;
+    }
+
+    if (memcmp(&open->visible, &state.visible, sizeof(open->visible)) == 0 &&
+        open->xscroll == state.xscroll &&
+        open->yscroll != state.yscroll) {
+        *handled = true;
+        return imgorg_browser_window_apply_zoom(
+            browser,
+            &state.visible,
+            open->yscroll > state.yscroll
+        );
+    }
+
+    return NULL;
 }
 
 os_error *imgorg_browser_window_load_png(
@@ -309,12 +440,137 @@ os_error *imgorg_browser_window_load_png(
         ((byte *) new_area + new_area->first);
     browser->image_width = width;
     browser->image_height = height;
+    browser->fit_to_window = true;
+    browser->zoom_percent = 100;
+    browser->pan_x = 0;
+    browser->pan_y = 0;
 
     if (browser->created) {
-        return xwimp_force_redraw(browser->handle, 0, -2048, 2048, 0);
+        return imgorg_browser_window_redraw_all(browser);
     }
 
     return NULL;
+}
+
+os_error *imgorg_browser_window_handle_pointer(
+    imgorg_browser_window *browser,
+    const wimp_pointer *pointer
+)
+{
+    wimp_window_state state;
+    wimp_drag drag;
+    os_error *error;
+
+    if (browser == NULL || pointer == NULL ||
+        pointer->w != browser->handle ||
+        browser->image_sprite_area == NULL) {
+        return NULL;
+    }
+
+    if ((pointer->buttons & wimp_CLICK_ADJUST) != 0) {
+        browser->fit_to_window = true;
+        browser->pan_x = 0;
+        browser->pan_y = 0;
+        return imgorg_browser_window_redraw_all(browser);
+    }
+
+    if ((pointer->buttons &
+         (wimp_CLICK_SELECT | wimp_DRAG_SELECT)) == 0) {
+        return NULL;
+    }
+
+    if (browser->fit_to_window) {
+        state.w = browser->handle;
+        error = xwimp_get_window_state(&state);
+        if (error != NULL) {
+            return error;
+        }
+        browser->zoom_percent = imgorg_browser_window_fit_zoom(
+            browser,
+            &state.visible
+        );
+        browser->fit_to_window = false;
+    }
+
+    memset(&drag, 0, sizeof(drag));
+    drag.w = browser->handle;
+    drag.type = wimp_DRAG_USER_POINT;
+    drag.initial.x0 = pointer->pos.x;
+    drag.initial.y0 = pointer->pos.y;
+    drag.initial.x1 = pointer->pos.x;
+    drag.initial.y1 = pointer->pos.y;
+    drag.bbox.x0 = -32768;
+    drag.bbox.y0 = -32768;
+    drag.bbox.x1 = 32767;
+    drag.bbox.y1 = 32767;
+
+    error = xwimp_drag_box(&drag);
+    if (error == NULL) {
+        browser->dragging = true;
+        browser->drag_start = pointer->pos;
+        browser->drag_pan_x = browser->pan_x;
+        browser->drag_pan_y = browser->pan_y;
+    }
+    return error;
+}
+
+os_error *imgorg_browser_window_handle_drag_end(
+    imgorg_browser_window *browser,
+    const wimp_dragged *dragged
+)
+{
+    if (browser == NULL || dragged == NULL || !browser->dragging) {
+        return NULL;
+    }
+
+    browser->dragging = false;
+    browser->pan_x = browser->drag_pan_x +
+        dragged->final.x0 - browser->drag_start.x;
+    browser->pan_y = browser->drag_pan_y +
+        dragged->final.y0 - browser->drag_start.y;
+    return imgorg_browser_window_redraw_all(browser);
+}
+
+os_error *imgorg_browser_window_handle_scroll(
+    imgorg_browser_window *browser,
+    const wimp_scroll *scroll
+)
+{
+    bool zoom_in;
+
+    if (browser == NULL || scroll == NULL ||
+        scroll->w != browser->handle ||
+        browser->image_sprite_area == NULL ||
+        scroll->ymin == wimp_SCROLL_NONE) {
+        return NULL;
+    }
+
+    switch (scroll->ymin) {
+    case wimp_SCROLL_LINE_UP:
+    case wimp_SCROLL_PAGE_UP:
+    case wimp_SCROLL_AUTO_UP:
+    case wimp_SCROLL_SINGLE_EXTENDED_UP:
+    case wimp_SCROLL_DOUBLE_EXTENDED_UP:
+        zoom_in = true;
+        break;
+
+    case wimp_SCROLL_LINE_DOWN:
+    case wimp_SCROLL_PAGE_DOWN:
+    case wimp_SCROLL_AUTO_DOWN:
+    case wimp_SCROLL_SINGLE_EXTENDED_DOWN:
+    case wimp_SCROLL_DOUBLE_EXTENDED_DOWN:
+        zoom_in = false;
+        break;
+
+    default:
+        return NULL;
+    }
+
+    return imgorg_browser_window_apply_zoom(
+        browser,
+        &scroll->visible,
+        zoom_in
+    );
 }
 
 os_error *imgorg_browser_window_redraw(
@@ -332,8 +588,8 @@ os_error *imgorg_browser_window_redraw(
     error = xwimp_redraw_window(redraw, &more);
     while (error == NULL && more) {
         if (browser->image_sprite_area != NULL) {
-            int x_eigen = 1;
-            int y_eigen = 1;
+            int x_eigen;
+            int y_eigen;
             int available_width;
             int available_height;
             int target_width;
@@ -342,38 +598,38 @@ os_error *imgorg_browser_window_redraw(
             int y;
             os_factors factors;
 
-            (void) xos_read_mode_variable(
-                os_CURRENT_MODE,
-                os_MODEVAR_XEIG_FACTOR,
-                &x_eigen,
-                NULL
-            );
-            (void) xos_read_mode_variable(
-                os_CURRENT_MODE,
-                os_MODEVAR_YEIG_FACTOR,
-                &y_eigen,
-                NULL
-            );
+            imgorg_browser_window_read_eigen_factors(&x_eigen, &y_eigen);
 
-            available_width =
-                (redraw->box.x1 - redraw->box.x0 - (2 * IMAGE_BORDER)) >>
-                x_eigen;
-            available_height =
-                (redraw->box.y1 - redraw->box.y0 - (2 * IMAGE_BORDER)) >>
-                y_eigen;
+            if (browser->fit_to_window) {
+                available_width =
+                    (redraw->box.x1 - redraw->box.x0 -
+                     (2 * IMAGE_BORDER)) >> x_eigen;
+                available_height =
+                    (redraw->box.y1 - redraw->box.y0 -
+                     (2 * IMAGE_BORDER)) >> y_eigen;
 
-            if ((long long) available_width * browser->image_height <=
-                (long long) available_height * browser->image_width) {
-                target_width = available_width;
-                target_height = (int) (
-                    (long long) browser->image_height * target_width /
-                    browser->image_width
-                );
+                if ((long long) available_width * browser->image_height <=
+                    (long long) available_height * browser->image_width) {
+                    target_width = available_width;
+                    target_height = (int) (
+                        (long long) browser->image_height * target_width /
+                        browser->image_width
+                    );
+                } else {
+                    target_height = available_height;
+                    target_width = (int) (
+                        (long long) browser->image_width * target_height /
+                        browser->image_height
+                    );
+                }
             } else {
-                target_height = available_height;
                 target_width = (int) (
-                    (long long) browser->image_width * target_height /
-                    browser->image_height
+                    (long long) browser->image_width *
+                    browser->zoom_percent / 100
+                );
+                target_height = (int) (
+                    (long long) browser->image_height *
+                    browser->zoom_percent / 100
                 );
             }
 
@@ -385,10 +641,10 @@ os_error *imgorg_browser_window_redraw(
 
                 x = redraw->box.x0 +
                     ((redraw->box.x1 - redraw->box.x0 -
-                      (target_width << x_eigen)) / 2);
+                      (target_width << x_eigen)) / 2) + browser->pan_x;
                 y = redraw->box.y0 +
                     ((redraw->box.y1 - redraw->box.y0 -
-                      (target_height << y_eigen)) / 2);
+                      (target_height << y_eigen)) / 2) + browser->pan_y;
 
                 error = xosspriteop_put_sprite_scaled(
                     osspriteop_PTR,
@@ -433,5 +689,6 @@ void imgorg_browser_window_destroy(imgorg_browser_window *browser)
     browser->image_sprite = NULL;
     browser->image_width = 0;
     browser->image_height = 0;
+    browser->dragging = false;
     browser->created = false;
 }

@@ -98,6 +98,12 @@ Launch Image Organiser, then drag a PNG file onto either its iconbar icon or its
 browser window. The image is loaded into memory and scaled to fit the window.
 Dropping another PNG replaces the current image.
 
+With an image open:
+
+- use the mouse wheel over the window to zoom from 10% to 800%
+- Select-drag the image to pan it
+- Adjust-click the image to return to fit-to-window
+
 ## Run portable tests
 
 The model and image-list code deliberately avoid RISC OS dependencies.
