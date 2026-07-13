@@ -5,11 +5,21 @@ using System.Windows.Forms;
 
 internal static class DeployRpcEmu
 {
-    private const string SourcePath =
-        @"D:\src\risc-os-image-organiser\build\riscos\RunImage.aif";
+    private const string RepositoryPath =
+        @"D:\src\risc-os-image-organiser";
 
-    private const string DestinationPath =
-        @"D:\src\RPCEmu - Direct\hostfs\src\!ImgOrg\!RunImage,ff8";
+    private const string DestinationDirectory =
+        @"D:\src\RPCEmu - Direct\hostfs\src\!ImgOrg";
+
+    private static readonly string[,] Files =
+    {
+        { @"build\riscos\RunImage.aif", "!RunImage,ff8" },
+        { @"app\!ImgOrg\!Boot", "!Boot,feb" },
+        { @"app\!ImgOrg\!Run", "!Run,feb" },
+        { @"app\!ImgOrg\!Sprites", "!Sprites,ff9" },
+        { @"app\!ImgOrg\!Sprites22", "!Sprites22,ff9" },
+        { @"app\!ImgOrg\!Sprites11", "!Sprites11,ff9" }
+    };
 
     [STAThread]
     private static int Main(string[] args)
@@ -24,7 +34,7 @@ internal static class DeployRpcEmu
             if (!quiet)
             {
                 MessageBox.Show(
-                    "RunImage.aif was copied to RPCEmu HostFS successfully.",
+                    "The Image Organiser application was copied to RPCEmu HostFS successfully.",
                     "Image Organiser deployment",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information
@@ -51,27 +61,36 @@ internal static class DeployRpcEmu
 
     private static void Deploy()
     {
-        string destinationDirectory = Path.GetDirectoryName(DestinationPath);
-
-        if (!File.Exists(SourcePath))
-        {
-            throw new FileNotFoundException(
-                "Build output was not found. Build RunImage.aif first.",
-                SourcePath
-            );
-        }
-
-        if (string.IsNullOrEmpty(destinationDirectory))
+        if (string.IsNullOrEmpty(DestinationDirectory))
         {
             throw new InvalidOperationException("The RPCEmu destination is invalid.");
         }
 
-        Directory.CreateDirectory(destinationDirectory);
-        File.Copy(SourcePath, DestinationPath, true);
+        Directory.CreateDirectory(DestinationDirectory);
 
-        if (!FilesMatch(SourcePath, DestinationPath))
+        for (int index = 0; index < Files.GetLength(0); ++index)
         {
-            throw new IOException("The copied file failed verification.");
+            string sourcePath = Path.Combine(RepositoryPath, Files[index, 0]);
+            string destinationPath = Path.Combine(
+                DestinationDirectory,
+                Files[index, 1]
+            );
+
+            if (!File.Exists(sourcePath))
+            {
+                throw new FileNotFoundException(
+                    "A deployment resource was not found. Rebuild the application first.",
+                    sourcePath
+                );
+            }
+
+            File.Copy(sourcePath, destinationPath, true);
+            if (!FilesMatch(sourcePath, destinationPath))
+            {
+                throw new IOException(
+                    "A copied file failed verification: " + Files[index, 1]
+                );
+            }
         }
     }
 

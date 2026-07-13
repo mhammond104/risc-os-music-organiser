@@ -28,6 +28,7 @@
 - separate image windows
 - fit-to-window mode (single-image preview complete)
 - zoom and pan (single-image preview complete)
+- remove viewer scroll bars; panning provides navigation within zoomed images
 - previous/next navigation
 - rotate for display
 - reveal in Filer

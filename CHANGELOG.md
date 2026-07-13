@@ -17,3 +17,4 @@
 - Mouse-wheel zoom, smooth Select-drag panning and Adjust-click fit-to-window
   reset.
 - Dynamic viewer titles showing the image name and zoom state.
+- Custom resolution-aware application and iconbar sprites.

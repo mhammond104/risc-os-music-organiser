@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "oslib/os.h"
+#include "oslib/wimpspriteop.h"
 
 #define IMGORG_MENU_ICON_FLAGS \
     (wimp_ICON_TEXT | (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT))
@@ -34,8 +35,7 @@ static os_error *imgorg_application_create_iconbar_icon(
     imgorg_application *application
 )
 {
-    static char icon_text[] = "ImgOrg";
-    static char validation[] = "";
+    static char icon_sprite[] = "!imgorg";
     wimp_icon_create icon;
 
     memset(&icon, 0, sizeof(icon));
@@ -43,20 +43,19 @@ static os_error *imgorg_application_create_iconbar_icon(
     icon.w = wimp_ICON_BAR_RIGHT;
     icon.icon.extent.x0 = 0;
     icon.icon.extent.y0 = 0;
-    icon.icon.extent.x1 = 120;
+    icon.icon.extent.x1 = 68;
     icon.icon.extent.y1 = 68;
 
     icon.icon.flags =
-        wimp_ICON_TEXT |
-        wimp_ICON_BORDER |
+        wimp_ICON_SPRITE |
         wimp_ICON_HCENTRED |
         wimp_ICON_VCENTRED |
         wimp_ICON_INDIRECTED |
         (wimp_BUTTON_CLICK << wimp_ICON_BUTTON_TYPE_SHIFT);
 
-    icon.icon.data.indirected_text.text = icon_text;
-    icon.icon.data.indirected_text.validation = validation;
-    icon.icon.data.indirected_text.size = sizeof(icon_text);
+    icon.icon.data.indirected_sprite.id = (osspriteop_id) icon_sprite;
+    icon.icon.data.indirected_sprite.area = wimpspriteop_AREA;
+    icon.icon.data.indirected_sprite.size = sizeof(icon_sprite);
 
     return xwimp_create_icon(&icon, &application->iconbar_icon);
 }

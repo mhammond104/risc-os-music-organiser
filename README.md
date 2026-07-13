@@ -7,7 +7,7 @@ A native RISC OS image browser, viewer and lightweight collection organiser.
 This repository contains the first application milestone:
 
 - native OSLib Wimp application
-- iconbar icon
+- custom resolution-aware application and iconbar icon
 - iconbar menu with Quit
 - browser window shell
 - drag-and-drop loading and fit-to-window display of one PNG image
@@ -35,10 +35,12 @@ enumeration, and placeholder thumbnail cells.
 
 ```text
 app/!ImgOrg/       RISC OS application directory
+assets/            Original artwork used to generate application sprites
 src/               Native application source
 include/imgorg/     Public project headers
 tests/             Portable host-side tests
 docs/              Architecture and roadmap
+tools/             Windows deployment and sprite-generation helpers
 Makefile            RISC OS cross-build
 Makefile.host       Host-side tests
 ```
