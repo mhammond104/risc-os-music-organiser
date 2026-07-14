@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "oslib/os.h"
+#include "oslib/osfile.h"
 #include "oslib/wimpspriteop.h"
 
 #define IMGORG_MENU_ICON_FLAGS \
@@ -103,6 +104,7 @@ static os_error *imgorg_application_handle_data_load(
 )
 {
     wimp_message_data_xfer *transfer = &message->data.data_xfer;
+    fileswitch_object_type object_type;
     os_error *error;
 
     if (!((transfer->w == wimp_ICON_BAR &&
@@ -111,10 +113,26 @@ static os_error *imgorg_application_handle_data_load(
         return NULL;
     }
 
-    error = imgorg_browser_window_load_png(
-        &application->browser,
-        transfer->file_name
+    error = xosfile_read_stamped(
+        transfer->file_name,
+        &object_type,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        NULL
     );
+    if (error == NULL && object_type == fileswitch_IS_DIR) {
+        error = imgorg_browser_window_load_directory(
+            &application->browser,
+            transfer->file_name
+        );
+    } else if (error == NULL) {
+        error = imgorg_browser_window_load_png(
+            &application->browser,
+            transfer->file_name
+        );
+    }
     if (error != NULL) {
         (void) wimp_report_error(
             error,
@@ -179,7 +197,8 @@ os_error *imgorg_application_run(imgorg_application *application)
     }
 
     while (!application->quit && error == NULL) {
-        if (application->browser.dragging) {
+        if (application->browser.dragging ||
+            imgorg_browser_window_is_scanning(&application->browser)) {
             os_t now;
 
             error = xos_read_monotonic_time(&now);
@@ -204,6 +223,11 @@ os_error *imgorg_application_run(imgorg_application *application)
             error = imgorg_browser_window_handle_drag_update(
                 &application->browser
             );
+            if (error == NULL) {
+                error = imgorg_browser_window_scan_step(
+                    &application->browser
+                );
+            }
             break;
 
         case wimp_REDRAW_WINDOW_REQUEST:

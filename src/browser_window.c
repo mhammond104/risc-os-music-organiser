@@ -25,11 +25,49 @@ enum {
     MAXIMUM_ZOOM_PERCENT = 800
 };
 
+enum {
+    THUMBNAIL_COLUMNS = 3,
+    THUMBNAIL_CELL_WIDTH = 280,
+    THUMBNAIL_CELL_HEIGHT = 240,
+    THUMBNAIL_GAP = 24,
+    THUMBNAIL_MARGIN = 32,
+    THUMBNAIL_IMAGE_INSET = 16,
+    THUMBNAIL_LABEL_HEIGHT = 48
+};
+
 static os_error browser_error;
 
 static os_error *imgorg_browser_window_update_drag(
     const imgorg_browser_window *browser
 );
+
+static int imgorg_browser_window_directory_extent_y0(
+    const imgorg_browser_window *browser
+)
+{
+    size_t rows = (browser->images.count + THUMBNAIL_COLUMNS - 1) /
+        THUMBNAIL_COLUMNS;
+    int height = THUMBNAIL_MARGIN + (int) rows *
+        (THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP);
+
+    if (height < BROWSER_VISIBLE_HEIGHT) {
+        height = BROWSER_VISIBLE_HEIGHT;
+    }
+    return -height;
+}
+
+static os_error *imgorg_browser_window_update_directory_extent(
+    const imgorg_browser_window *browser
+)
+{
+    os_box extent;
+
+    extent.x0 = 0;
+    extent.y0 = imgorg_browser_window_directory_extent_y0(browser);
+    extent.x1 = BROWSER_VISIBLE_WIDTH;
+    extent.y1 = 0;
+    return xwimp_set_extent(browser->handle, &extent);
+}
 
 static os_error *imgorg_browser_window_error(const char *message)
 {
@@ -116,16 +154,14 @@ static os_error *imgorg_browser_window_update_title(
     imgorg_browser_window *browser
 )
 {
-    if (browser->image_name[0] == '\0') {
-        snprintf(browser->title, sizeof(browser->title), "Image Organiser");
-    } else if (browser->fit_to_window) {
+    if (browser->image_name[0] != '\0' && browser->fit_to_window) {
         snprintf(
             browser->title,
             sizeof(browser->title),
             "%s - Fit",
             browser->image_name
         );
-    } else {
+    } else if (browser->image_name[0] != '\0') {
         snprintf(
             browser->title,
             sizeof(browser->title),
@@ -133,6 +169,28 @@ static os_error *imgorg_browser_window_update_title(
             browser->image_name,
             browser->zoom_percent
         );
+    } else if (browser->directory_name[0] != '\0') {
+        if (browser->scanner.active) {
+            snprintf(
+                browser->title,
+                sizeof(browser->title),
+                "%s - %lu image%s - Scanning",
+                browser->directory_name,
+                (unsigned long) browser->images.count,
+                browser->images.count == 1 ? "" : "s"
+            );
+        } else {
+            snprintf(
+                browser->title,
+                sizeof(browser->title),
+                "%s - %lu image%s",
+                browser->directory_name,
+                (unsigned long) browser->images.count,
+                browser->images.count == 1 ? "" : "s"
+            );
+        }
+    } else {
+        snprintf(browser->title, sizeof(browser->title), "Image Organiser");
     }
 
     if (browser->created) {
@@ -142,21 +200,22 @@ static os_error *imgorg_browser_window_update_title(
     return NULL;
 }
 
-static void imgorg_browser_window_set_image_name(
-    imgorg_browser_window *browser,
-    const char *file_name
+static void imgorg_browser_window_copy_leafname(
+    char *destination,
+    size_t destination_size,
+    const char *path
 )
 {
     const char *cursor;
-    const char *leaf = file_name;
+    const char *leaf = path;
 
-    for (cursor = file_name; *cursor != '\0'; ++cursor) {
+    for (cursor = path; *cursor != '\0'; ++cursor) {
         if (*cursor == '.' || *cursor == ':') {
             leaf = cursor + 1;
         }
     }
 
-    snprintf(browser->image_name, sizeof(browser->image_name), "%s", leaf);
+    snprintf(destination, destination_size, "%s", leaf);
 }
 
 static os_error *imgorg_browser_window_apply_zoom(
@@ -299,6 +358,8 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     }
 
     memset(browser, 0, sizeof(*browser));
+    imgorg_image_list_init(&browser->images);
+    imgorg_directory_scanner_init(&browser->scanner);
     memset(&definition, 0, sizeof(definition));
     (void) imgorg_browser_window_update_title(browser);
 
@@ -501,7 +562,15 @@ os_error *imgorg_browser_window_load_png(
     browser->zoom_percent = 100;
     browser->pan_x = 0;
     browser->pan_y = 0;
-    imgorg_browser_window_set_image_name(browser, file_name);
+    browser->directory_name[0] = '\0';
+    browser->directory_path[0] = '\0';
+    browser->scanner.active = false;
+    imgorg_image_list_clear(&browser->images);
+    imgorg_browser_window_copy_leafname(
+        browser->image_name,
+        sizeof(browser->image_name),
+        file_name
+    );
 
     if (browser->created) {
         os_error *error = imgorg_browser_window_update_title(browser);
@@ -511,6 +580,103 @@ os_error *imgorg_browser_window_load_png(
         return imgorg_browser_window_redraw_all(browser);
     }
 
+    return NULL;
+}
+
+os_error *imgorg_browser_window_load_directory(
+    imgorg_browser_window *browser,
+    const char *directory_path
+)
+{
+    int path_length;
+    os_error *error;
+
+    if (browser == NULL || directory_path == NULL || directory_path[0] == '\0') {
+        return imgorg_browser_window_error("No directory was supplied");
+    }
+
+    path_length = snprintf(
+        browser->directory_path,
+        sizeof(browser->directory_path),
+        "%s",
+        directory_path
+    );
+    if (path_length < 0 ||
+        (size_t) path_length >= sizeof(browser->directory_path)) {
+        browser->directory_path[0] = '\0';
+        return imgorg_browser_window_error("The directory path is too long");
+    }
+
+    free(browser->image_sprite_area);
+    browser->image_sprite_area = NULL;
+    browser->image_sprite = NULL;
+    browser->image_width = 0;
+    browser->image_height = 0;
+    browser->image_name[0] = '\0';
+    browser->dragging = false;
+    imgorg_image_list_clear(&browser->images);
+    if (!imgorg_directory_scanner_start(&browser->scanner, directory_path)) {
+        browser->directory_path[0] = '\0';
+        return imgorg_browser_window_error("The directory path is too long");
+    }
+    imgorg_browser_window_copy_leafname(
+        browser->directory_name,
+        sizeof(browser->directory_name),
+        directory_path
+    );
+
+    error = imgorg_browser_window_update_title(browser);
+    if (error != NULL) {
+        return error;
+    }
+    error = imgorg_browser_window_update_directory_extent(browser);
+    if (error != NULL) {
+        return error;
+    }
+    return imgorg_browser_window_redraw_all(browser);
+}
+
+bool imgorg_browser_window_is_scanning(
+    const imgorg_browser_window *browser
+)
+{
+    return browser != NULL && browser->scanner.active;
+}
+
+os_error *imgorg_browser_window_scan_step(imgorg_browser_window *browser)
+{
+    os_error *error;
+    bool changed;
+    bool was_active;
+
+    if (browser == NULL || !browser->scanner.active) {
+        return NULL;
+    }
+
+    was_active = browser->scanner.active;
+    error = imgorg_directory_scanner_step(
+        &browser->scanner,
+        &browser->images,
+        &changed
+    );
+    if (error != NULL) {
+        return error;
+    }
+
+    if (changed) {
+        error = imgorg_browser_window_update_directory_extent(browser);
+        if (error != NULL) {
+            return error;
+        }
+        error = imgorg_browser_window_redraw_all(browser);
+        if (error != NULL) {
+            return error;
+        }
+    }
+
+    if (changed || was_active != browser->scanner.active) {
+        return imgorg_browser_window_update_title(browser);
+    }
     return NULL;
 }
 
@@ -645,9 +811,50 @@ os_error *imgorg_browser_window_handle_scroll(
 
     if (browser == NULL || scroll == NULL ||
         scroll->w != browser->handle ||
-        browser->image_sprite_area == NULL ||
         scroll->ymin == wimp_SCROLL_NONE) {
         return NULL;
+    }
+
+    if (browser->image_sprite_area == NULL) {
+        wimp_open open;
+        int visible_height;
+        int minimum_scroll;
+        int amount;
+
+        if (browser->directory_path[0] == '\0') {
+            return NULL;
+        }
+
+        open.w = scroll->w;
+        open.visible = scroll->visible;
+        open.xscroll = 0;
+        open.yscroll = scroll->yscroll;
+        open.next = scroll->next;
+        visible_height = scroll->visible.y1 - scroll->visible.y0;
+        minimum_scroll =
+            imgorg_browser_window_directory_extent_y0(browser) +
+            visible_height;
+        if (minimum_scroll > 0) {
+            minimum_scroll = 0;
+        }
+
+        amount = (scroll->ymin == wimp_SCROLL_PAGE_UP ||
+                  scroll->ymin == wimp_SCROLL_PAGE_DOWN) ?
+            visible_height - 64 : 64;
+        if (amount < 64) {
+            amount = 64;
+        }
+        if (scroll->ymin > 0) {
+            open.yscroll += amount;
+        } else {
+            open.yscroll -= amount;
+        }
+        if (open.yscroll > 0) {
+            open.yscroll = 0;
+        } else if (open.yscroll < minimum_scroll) {
+            open.yscroll = minimum_scroll;
+        }
+        return xwimp_open_window(&open);
     }
 
     switch (scroll->ymin) {
@@ -768,6 +975,150 @@ static void imgorg_browser_window_fill_box(const os_box *box)
     );
 }
 
+static bool imgorg_browser_window_boxes_intersect(
+    const os_box *first,
+    const os_box *second
+)
+{
+    return first->x0 < second->x1 && first->x1 > second->x0 &&
+        first->y0 < second->y1 && first->y1 > second->y0;
+}
+
+static const char *imgorg_browser_window_format_name(
+    imgorg_image_format format
+)
+{
+    switch (format) {
+    case IMGORG_IMAGE_FORMAT_SPRITE:
+        return "Sprite";
+    case IMGORG_IMAGE_FORMAT_JPEG:
+        return "JPEG";
+    case IMGORG_IMAGE_FORMAT_PNG:
+        return "PNG";
+    default:
+        return "Image";
+    }
+}
+
+static void imgorg_browser_window_make_label(
+    char *label,
+    size_t label_size,
+    const char *leafname
+)
+{
+    enum { MAXIMUM_LABEL_CHARACTERS = 29 };
+    size_t length = strlen(leafname);
+
+    if (length <= MAXIMUM_LABEL_CHARACTERS) {
+        snprintf(label, label_size, "%s", leafname);
+    } else {
+        snprintf(
+            label,
+            label_size,
+            "%.*s...",
+            MAXIMUM_LABEL_CHARACTERS - 3,
+            leafname
+        );
+    }
+}
+
+static os_error *imgorg_browser_window_plot_directory(
+    const imgorg_browser_window *browser,
+    const wimp_draw *draw
+)
+{
+    int origin_x = draw->box.x0 - draw->xscroll;
+    int origin_y = draw->box.y1 - draw->yscroll;
+    size_t index;
+    os_error *error;
+
+    error = xwimptextop_set_colour(os_COLOUR_BLACK, os_COLOUR_WHITE);
+    if (error != NULL) {
+        return error;
+    }
+
+    for (index = 0; index < browser->images.count; ++index) {
+        const imgorg_image_entry *entry =
+            imgorg_image_list_get(&browser->images, index);
+        size_t row = index / THUMBNAIL_COLUMNS;
+        size_t column = index % THUMBNAIL_COLUMNS;
+        os_box cell;
+        os_box inner;
+        os_box preview;
+        char label[40];
+
+        cell.x0 = origin_x + THUMBNAIL_MARGIN + (int) column *
+            (THUMBNAIL_CELL_WIDTH + THUMBNAIL_GAP);
+        cell.x1 = cell.x0 + THUMBNAIL_CELL_WIDTH;
+        cell.y1 = origin_y - THUMBNAIL_MARGIN - (int) row *
+            (THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP);
+        cell.y0 = cell.y1 - THUMBNAIL_CELL_HEIGHT;
+        if (!imgorg_browser_window_boxes_intersect(&cell, &draw->clip)) {
+            continue;
+        }
+
+        (void) colourtrans_set_gcol(
+            os_COLOUR_MID_LIGHT_GREY,
+            0,
+            os_ACTION_OVERWRITE,
+            NULL
+        );
+        imgorg_browser_window_fill_box(&cell);
+
+        inner = cell;
+        inner.x0 += 2;
+        inner.y0 += 2;
+        inner.x1 -= 2;
+        inner.y1 -= 2;
+        (void) colourtrans_set_gcol(
+            os_COLOUR_WHITE,
+            0,
+            os_ACTION_OVERWRITE,
+            NULL
+        );
+        imgorg_browser_window_fill_box(&inner);
+
+        preview.x0 = cell.x0 + THUMBNAIL_IMAGE_INSET;
+        preview.x1 = cell.x1 - THUMBNAIL_IMAGE_INSET;
+        preview.y0 = cell.y0 + THUMBNAIL_LABEL_HEIGHT;
+        preview.y1 = cell.y1 - THUMBNAIL_IMAGE_INSET;
+        (void) colourtrans_set_gcol(
+            os_COLOUR_VERY_LIGHT_GREY,
+            0,
+            os_ACTION_OVERWRITE,
+            NULL
+        );
+        imgorg_browser_window_fill_box(&preview);
+
+        error = xwimptextop_paint(
+            0,
+            imgorg_browser_window_format_name(entry->format),
+            preview.x0 + 16,
+            preview.y0 + ((preview.y1 - preview.y0) / 2)
+        );
+        if (error != NULL) {
+            return error;
+        }
+
+        imgorg_browser_window_make_label(
+            label,
+            sizeof(label),
+            entry->leafname
+        );
+        error = xwimptextop_paint(
+            0,
+            label,
+            cell.x0 + THUMBNAIL_IMAGE_INSET,
+            cell.y0 + 16
+        );
+        if (error != NULL) {
+            return error;
+        }
+    }
+
+    return NULL;
+}
+
 static void imgorg_browser_window_clear_around_image(
     const os_box *visible,
     const os_box *image
@@ -859,6 +1210,8 @@ os_error *imgorg_browser_window_redraw(
                 redraw,
                 &image_box
             );
+        } else if (browser->directory_path[0] != '\0') {
+            error = imgorg_browser_window_plot_directory(browser, redraw);
         } else {
             int origin_x = redraw->box.x0 - redraw->xscroll;
             int origin_y = redraw->box.y1 - redraw->yscroll;
@@ -881,12 +1234,16 @@ os_error *imgorg_browser_window_redraw(
 
 void imgorg_browser_window_destroy(imgorg_browser_window *browser)
 {
-    if (browser == NULL || !browser->created) {
+    if (browser == NULL) {
         return;
     }
 
-    (void) xwimp_delete_window(browser->handle);
+    if (browser->created) {
+        (void) xwimp_delete_window(browser->handle);
+    }
     free(browser->image_sprite_area);
+    imgorg_image_list_destroy(&browser->images);
+    imgorg_directory_scanner_init(&browser->scanner);
     browser->image_sprite_area = NULL;
     browser->image_sprite = NULL;
     browser->image_width = 0;

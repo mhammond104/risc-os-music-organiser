@@ -10,15 +10,19 @@ This repository contains the first application milestone:
 - custom resolution-aware application and iconbar icon
 - iconbar menu with Quit
 - browser window shell
+- directory drag-and-drop
+- incremental enumeration of JPEG, PNG and Sprite files
+- labelled placeholder thumbnail grid for directory contents
 - drag-and-drop loading and fit-to-window display of one PNG image
 - clean `Message_Quit` handling
 - portable image-list and directory-entry model
 - host-side unit tests for the portable model
 - RISC OS application-directory packaging
 
-PNG display is decoded by the statically linked libpng library and plotted as a
-native RISC OS sprite. The next milestone is directory drag-and-drop, directory
-enumeration, and placeholder thumbnail cells.
+Directory contents are enumerated incrementally during null-event time and
+displayed as labelled placeholder cells. PNG display is decoded by the
+statically linked libpng library and plotted as a native RISC OS sprite. The
+next milestone is decoding real thumbnails into those browser cells.
 
 ## Intended features
 
@@ -96,10 +100,13 @@ and emulator/tooling in use.
 
 ## Open a PNG
 
-Launch Image Organiser, then drag a PNG file onto either its iconbar icon or its
-browser window. The image is loaded into memory and scaled to fit the window.
-Dropping another PNG replaces the current image. The window title shows the
+Launch Image Organiser, then drag a directory or PNG file onto either its
+iconbar icon or its browser window. A directory becomes the browser's current
+source. A PNG is loaded into memory and scaled to fit the window. Dropping
+another source replaces the current one. For a PNG, the window title shows the
 image name and the current zoom percentage, or `Fit` in fit-to-window mode.
+Directory browsers currently show labelled format placeholders for Sprite,
+JPEG and PNG files while the thumbnail decoding pipeline is developed.
 
 With an image open:
 

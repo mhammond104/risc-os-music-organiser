@@ -18,3 +18,6 @@
   reset.
 - Dynamic viewer titles showing the image name and zoom state.
 - Custom resolution-aware application and iconbar sprites.
+- Directory drag-and-drop with incremental JPEG, PNG and Sprite enumeration.
+- Scrollable labelled placeholder cells populated from real directory entries.
+- Static ELF-to-AIF conversion integrated into the normal RISC OS build.

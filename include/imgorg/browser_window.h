@@ -2,6 +2,7 @@
 #define IMGORG_BROWSER_WINDOW_H
 
 #include <stdbool.h>
+#include "imgorg/directory_scanner.h"
 #include "oslib/osspriteop.h"
 #include "oslib/wimp.h"
 
@@ -10,6 +11,10 @@ typedef struct imgorg_browser_window {
     bool created;
     char title[160];
     char image_name[112];
+    char directory_name[112];
+    char directory_path[IMGORG_PATH_CAPACITY];
+    imgorg_image_list images;
+    imgorg_directory_scanner scanner;
     osspriteop_area *image_sprite_area;
     osspriteop_header *image_sprite;
     int image_width;
@@ -34,6 +39,16 @@ os_error *imgorg_browser_window_handle_open_request(
 os_error *imgorg_browser_window_load_png(
     imgorg_browser_window *browser,
     const char *file_name
+);
+os_error *imgorg_browser_window_load_directory(
+    imgorg_browser_window *browser,
+    const char *directory_path
+);
+bool imgorg_browser_window_is_scanning(
+    const imgorg_browser_window *browser
+);
+os_error *imgorg_browser_window_scan_step(
+    imgorg_browser_window *browser
 );
 os_error *imgorg_browser_window_handle_pointer(
     imgorg_browser_window *browser,

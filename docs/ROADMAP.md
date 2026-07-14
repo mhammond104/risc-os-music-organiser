@@ -8,30 +8,30 @@
 - [x] redraw loop
 - [x] portable image-list model
 - [x] iconbar menu
-- [ ] application sprites
-- [ ] directory drag-and-drop
-- [ ] incremental directory enumeration
-- [ ] thumbnail placeholders laid out from real directory entries
+- [x] application sprites
+- [x] directory drag-and-drop
+- [x] incremental directory enumeration
+- [x] thumbnail placeholders laid out from real directory entries
 
 ## 0.2 — thumbnails
 
-- Sprite loading
-- JPEG decoding
-- PNG decoding (single-image preview complete)
-- progressive thumbnail queue
-- memory thumbnail store
-- persistent thumbnail cache
-- selectable thumbnail cells
+- [ ] Sprite thumbnail loading
+- [ ] JPEG thumbnail decoding
+- [ ] PNG thumbnail decoding (single-image preview complete)
+- [ ] progressive thumbnail queue
+- [ ] memory thumbnail store
+- [ ] persistent thumbnail cache
+- [ ] selectable thumbnail cells
 
 ## 0.3 — viewer
 
-- separate image windows
-- fit-to-window mode (single-image preview complete)
-- zoom and pan (single-image preview complete)
-- remove viewer scroll bars; panning provides navigation within zoomed images
-- previous/next navigation
-- rotate for display
-- reveal in Filer
+- [ ] separate image windows
+- [ ] fit-to-window mode (single-image preview complete)
+- [ ] zoom and pan (single-image preview complete)
+- [ ] remove viewer scroll bars; panning provides navigation within zoomed images
+- [ ] previous/next navigation
+- [ ] rotate for display
+- [ ] reveal in Filer
 
 ## 0.4 — organisation
 

@@ -31,13 +31,15 @@ follows the mouse continuously without flashing the window background first.
 `image_entry.c` and `image_list.c` are platform-independent. They represent
 discovered files and can be tested on the development host.
 
-### Directory scanner — next milestone
+### Directory scanner
 
-The scanner will enumerate a RISC OS directory incrementally and append only
-supported filetypes. It must not block the desktop while processing a large
-directory.
+Directory drops are classified using RISC OS catalogue metadata and stored as
+the browser's current source. The scanner enumerates that source in bounded
+batches during null-event time and appends only supported filetypes, so large
+directories do not block the desktop. Each batch updates the browser's
+scrollable placeholder grid immediately.
 
-### Thumbnail pipeline — later milestone
+### Thumbnail pipeline — next milestone
 
 A queue will decode and scale a limited number of images during null-event
 time. Completed thumbnails will be stored as sprites and redraw requests will
