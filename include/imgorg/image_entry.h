@@ -19,6 +19,8 @@ typedef struct imgorg_image_entry {
     char leafname[IMGORG_LEAFNAME_CAPACITY];
     char path[IMGORG_PATH_CAPACITY];
     uint64_t size_bytes;
+    uint32_t load_addr;
+    uint32_t exec_addr;
     uint32_t riscos_filetype;
     imgorg_image_format format;
     bool selected;
@@ -30,6 +32,8 @@ bool imgorg_image_entry_init(
     const char *path,
     const char *leafname,
     uint64_t size_bytes,
+    uint32_t load_addr,
+    uint32_t exec_addr,
     uint32_t riscos_filetype
 );
 

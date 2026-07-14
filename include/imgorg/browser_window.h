@@ -28,6 +28,8 @@ typedef struct imgorg_browser_window {
     size_t thumbnail_count;
     size_t thumbnail_capacity;
     size_t thumbnail_cursor;
+    size_t thumbnail_priority_start;
+    size_t thumbnail_priority_end;
     osspriteop_area *image_sprite_area;
     osspriteop_header *image_sprite;
     int image_width;

@@ -12,17 +12,19 @@ This repository contains the first application milestone:
 - browser window shell
 - directory drag-and-drop
 - incremental enumeration of JPEG, PNG and Sprite files
-- progressive in-memory PNG thumbnails with labelled placeholders for other formats
+- progressive in-memory PNG and JPEG thumbnails with Sprite placeholders
 - drag-and-drop loading and fit-to-window display of one PNG image
 - clean `Message_Quit` handling
 - portable image-list and directory-entry model
 - host-side unit tests for the portable model
 - RISC OS application-directory packaging
 
-Directory contents are enumerated incrementally during null-event time. PNG
-thumbnails are progressively decoded into bounded in-memory sprites; JPEG and
-Sprite files retain labelled placeholders. Full PNG display is decoded by the
-statically linked libpng library and plotted as a native RISC OS sprite.
+Directory contents are enumerated incrementally during null-event time. PNG and
+JPEG thumbnails are progressively decoded into bounded in-memory sprites, with
+visible rows processed first. JPEGs use an embedded EXIF preview when available;
+generated thumbnails are cached below `<Choices$Write>.ImgOrg.Thumbs` for later
+visits. Sprite files retain labelled placeholders. Full PNG display is decoded
+by the statically linked libpng library and plotted as a native RISC OS sprite.
 
 ## Intended features
 
@@ -58,7 +60,7 @@ For a RISC OS build:
 
 - GCCSDK cross-compiler
 - OSLib
-- libpng 1.6 and zlib built for the GCCSDK environment
+- libpng 1.6, libjpeg-turbo and zlib built for the GCCSDK environment
 - GNU Make
 
 The Makefile assumes the compiler is available as:
@@ -105,8 +107,8 @@ iconbar icon or its browser window. A directory becomes the browser's current
 source. A PNG is loaded into memory and scaled to fit the window. Dropping
 another source replaces the current one. For a PNG, the window title shows the
 image name and the current zoom percentage, or `Fit` in fit-to-window mode.
-Directory browsers show real PNG thumbnails and labelled format placeholders
-for Sprite and JPEG files while those decoders are developed.
+Directory browsers show real PNG and JPEG thumbnails and labelled format
+placeholders for Sprite files while Sprite loading is developed.
 
 With an image open:
 

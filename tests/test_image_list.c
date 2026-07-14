@@ -29,6 +29,8 @@ static void test_append_and_read(void)
         "ADFS::HardDisc4.$.Pictures.Sample",
         "Sample",
         123456,
+        0xFFF12345,
+        0x6789ABCD,
         0xC85
     ));
     assert(imgorg_image_list_append(&list, &entry));
@@ -38,6 +40,8 @@ static void test_append_and_read(void)
     assert(stored != NULL);
     assert(stored->format == IMGORG_IMAGE_FORMAT_JPEG);
     assert(stored->size_bytes == 123456);
+    assert(stored->load_addr == 0xFFF12345);
+    assert(stored->exec_addr == 0x6789ABCD);
     assert(imgorg_image_list_get(&list, 1) == NULL);
 
     imgorg_image_list_clear(&list);

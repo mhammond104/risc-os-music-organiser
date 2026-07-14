@@ -22,3 +22,6 @@
 - Scrollable labelled placeholder cells populated from real directory entries.
 - Static ELF-to-AIF conversion integrated into the normal RISC OS build.
 - Progressive PNG thumbnail decoding with a bounded in-memory sprite store.
+- Reduced-resolution libjpeg-turbo thumbnails in the in-memory sprite store.
+- Embedded EXIF JPEG previews, visible-row prioritisation and a persistent,
+  source-validated thumbnail cache.

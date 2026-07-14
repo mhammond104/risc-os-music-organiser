@@ -28,6 +28,8 @@ bool imgorg_image_entry_init(
     const char *path,
     const char *leafname,
     uint64_t size_bytes,
+    uint32_t load_addr,
+    uint32_t exec_addr,
     uint32_t riscos_filetype
 )
 {
@@ -54,6 +56,8 @@ bool imgorg_image_entry_init(
     }
 
     entry->size_bytes = size_bytes;
+    entry->load_addr = load_addr;
+    entry->exec_addr = exec_addr;
     entry->riscos_filetype = riscos_filetype & 0xFFFu;
     entry->format = imgorg_image_format_from_filetype(riscos_filetype);
     entry->selected = false;

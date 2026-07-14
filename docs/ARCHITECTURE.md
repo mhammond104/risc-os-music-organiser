@@ -41,11 +41,15 @@ scrollable placeholder grid immediately.
 
 ### Thumbnail pipeline
 
-The browser decodes one queued PNG during each null-event slice, downsamples it
-to a bounded native sprite and retains it in memory for the current directory.
-Completed thumbnails trigger redraws while JPEG and Sprite entries continue to
-use labelled placeholders. Persistent caching and the remaining decoders are
-later stages of this pipeline.
+The browser decodes one queued PNG or JPEG during each null-event slice,
+downsamples it to a bounded native sprite and retains it in memory for the
+current directory. Visible rows are prioritised over the sequential background
+queue. PNGs use the linked libpng decoder. JPEGs use an embedded EXIF preview
+when present, otherwise libjpeg-turbo's reduced-resolution IDCT before a final
+thumbnail-sized downsample. Completed thumbnails are stored below
+`<Choices$Write>.ImgOrg.Thumbs`; cache keys and headers include the source path,
+size and RISC OS timestamp so stale entries are ignored. Sprite entries continue
+to use labelled placeholders.
 
 ### Catalogue — later milestone
 

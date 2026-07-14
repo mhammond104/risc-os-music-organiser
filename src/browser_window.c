@@ -1,15 +1,18 @@
 #include "imgorg/browser_window.h"
 
 #include <limits.h>
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#include <jpeglib.h>
 #include <png.h>
 
 #include "oslib/colourtrans.h"
 #include "oslib/os.h"
 #include "oslib/wimpspriteop.h"
+#include "imgorg/thumbnail_cache.h"
 
 enum {
     BROWSER_VISIBLE_WIDTH = 960,
@@ -18,6 +21,7 @@ enum {
 
 enum {
     MAXIMUM_PNG_SIZE = 64 * 1024 * 1024,
+    MAXIMUM_JPEG_SIZE = 64 * 1024 * 1024,
     MAXIMUM_IMAGE_DIMENSION = 8192,
     IMAGE_BORDER = 32,
     SPRITE_DPI = 90,
@@ -38,6 +42,18 @@ enum {
 };
 
 static os_error browser_error;
+
+typedef struct imgorg_jpeg_error_state {
+    struct jpeg_error_mgr manager;
+    jmp_buf escape;
+} imgorg_jpeg_error_state;
+
+static void imgorg_browser_window_jpeg_error_exit(j_common_ptr common)
+{
+    imgorg_jpeg_error_state *error =
+        (imgorg_jpeg_error_state *) common->err;
+    longjmp(error->escape, 1);
+}
 
 static os_error *imgorg_browser_window_update_drag(
     const imgorg_browser_window *browser
@@ -463,6 +479,483 @@ static osspriteop_area *imgorg_browser_window_decode_png_file(
     return area;
 }
 
+static osspriteop_area *imgorg_browser_window_create_sprite(
+    int width,
+    int height
+)
+{
+    osspriteop_area *area;
+    osspriteop_header *sprite;
+    byte *pixels;
+    size_t pixel_bytes;
+    size_t area_size;
+    size_t index;
+
+    if (width <= 0 || height <= 0 ||
+        (size_t) width > SIZE_MAX / (size_t) height / 4) {
+        return NULL;
+    }
+    pixel_bytes = (size_t) width * height * 4;
+    area_size = sizeof(*area) + sizeof(*sprite) + pixel_bytes;
+    if (area_size > INT_MAX) {
+        return NULL;
+    }
+
+    area = malloc(area_size);
+    if (area == NULL) {
+        return NULL;
+    }
+    memset(area, 0, sizeof(*area) + sizeof(*sprite));
+    area->size = (int) area_size;
+    area->sprite_count = 1;
+    area->first = sizeof(*area);
+    area->used = (int) area_size;
+
+    sprite = (osspriteop_header *) ((byte *) area + area->first);
+    sprite->size = sizeof(*sprite) + (int) pixel_bytes;
+    memcpy(sprite->name, "imgorg", 7);
+    sprite->width = width - 1;
+    sprite->height = height - 1;
+    sprite->left_bit = 0;
+    sprite->right_bit = 31;
+    sprite->image = sizeof(*sprite);
+    sprite->mask = sizeof(*sprite);
+    sprite->mode = (os_mode) imgorg_browser_window_sprite_mode();
+    pixels = (byte *) sprite + sprite->image;
+    for (index = 0; index < (size_t) width * height; ++index) {
+        pixels[index * 4] = 255;
+        pixels[index * 4 + 1] = 255;
+        pixels[index * 4 + 2] = 255;
+        pixels[index * 4 + 3] = 0;
+    }
+    return area;
+}
+
+static bool imgorg_browser_window_exif_read_u16(
+    const byte *data,
+    size_t size,
+    size_t offset,
+    bool little_endian,
+    uint16_t *value
+)
+{
+    if (offset > size || size - offset < 2) {
+        return false;
+    }
+    if (little_endian) {
+        *value = (uint16_t) data[offset] |
+            ((uint16_t) data[offset + 1] << 8);
+    } else {
+        *value = ((uint16_t) data[offset] << 8) |
+            (uint16_t) data[offset + 1];
+    }
+    return true;
+}
+
+static bool imgorg_browser_window_exif_read_u32(
+    const byte *data,
+    size_t size,
+    size_t offset,
+    bool little_endian,
+    uint32_t *value
+)
+{
+    if (offset > size || size - offset < 4) {
+        return false;
+    }
+    if (little_endian) {
+        *value = (uint32_t) data[offset] |
+            ((uint32_t) data[offset + 1] << 8) |
+            ((uint32_t) data[offset + 2] << 16) |
+            ((uint32_t) data[offset + 3] << 24);
+    } else {
+        *value = ((uint32_t) data[offset] << 24) |
+            ((uint32_t) data[offset + 1] << 16) |
+            ((uint32_t) data[offset + 2] << 8) |
+            (uint32_t) data[offset + 3];
+    }
+    return true;
+}
+
+static bool imgorg_browser_window_extract_exif_thumbnail(
+    const byte *app1,
+    size_t app1_size,
+    byte **thumbnail_out,
+    size_t *thumbnail_size_out
+)
+{
+    const byte *tiff;
+    size_t tiff_size;
+    bool little_endian;
+    uint16_t magic;
+    uint32_t ifd0_offset;
+    uint16_t entry_count;
+    size_t next_ifd_position;
+    uint32_t ifd1_offset;
+    uint32_t jpeg_offset = 0;
+    uint32_t jpeg_size = 0;
+    size_t index;
+
+    if (app1_size < 14 || memcmp(app1, "Exif\0\0", 6) != 0) {
+        return false;
+    }
+    tiff = app1 + 6;
+    tiff_size = app1_size - 6;
+    if (tiff[0] == 'I' && tiff[1] == 'I') {
+        little_endian = true;
+    } else if (tiff[0] == 'M' && tiff[1] == 'M') {
+        little_endian = false;
+    } else {
+        return false;
+    }
+    if (!imgorg_browser_window_exif_read_u16(
+            tiff, tiff_size, 2, little_endian, &magic
+        ) || magic != 42 ||
+        !imgorg_browser_window_exif_read_u32(
+            tiff, tiff_size, 4, little_endian, &ifd0_offset
+        ) ||
+        !imgorg_browser_window_exif_read_u16(
+            tiff, tiff_size, ifd0_offset, little_endian, &entry_count
+        ) || ifd0_offset > tiff_size || tiff_size - ifd0_offset < 2 ||
+        entry_count > (tiff_size - ifd0_offset - 2) / 12) {
+        return false;
+    }
+    next_ifd_position = (size_t) ifd0_offset + 2 +
+        ((size_t) entry_count * 12);
+    if (!imgorg_browser_window_exif_read_u32(
+            tiff,
+            tiff_size,
+            next_ifd_position,
+            little_endian,
+            &ifd1_offset
+        ) || ifd1_offset == 0 ||
+        !imgorg_browser_window_exif_read_u16(
+            tiff, tiff_size, ifd1_offset, little_endian, &entry_count
+        ) || ifd1_offset > tiff_size || tiff_size - ifd1_offset < 2 ||
+        entry_count > (tiff_size - ifd1_offset - 2) / 12) {
+        return false;
+    }
+
+    for (index = 0; index < entry_count; ++index) {
+        size_t entry_offset = (size_t) ifd1_offset + 2 + index * 12;
+        uint16_t tag;
+        uint16_t type;
+        uint32_t count;
+        uint32_t value;
+
+        if (!imgorg_browser_window_exif_read_u16(
+                tiff, tiff_size, entry_offset, little_endian, &tag
+            ) ||
+            !imgorg_browser_window_exif_read_u16(
+                tiff, tiff_size, entry_offset + 2, little_endian, &type
+            ) ||
+            !imgorg_browser_window_exif_read_u32(
+                tiff, tiff_size, entry_offset + 4, little_endian, &count
+            ) ||
+            !imgorg_browser_window_exif_read_u32(
+                tiff, tiff_size, entry_offset + 8, little_endian, &value
+            )) {
+            return false;
+        }
+        if (type == 4 && count == 1) {
+            if (tag == 0x0201) {
+                jpeg_offset = value;
+            } else if (tag == 0x0202) {
+                jpeg_size = value;
+            }
+        }
+    }
+
+    if (jpeg_offset == 0 || jpeg_size < 4 ||
+        jpeg_offset > tiff_size || jpeg_size > tiff_size - jpeg_offset ||
+        jpeg_size > MAXIMUM_JPEG_SIZE ||
+        tiff[jpeg_offset] != 0xFF || tiff[jpeg_offset + 1] != 0xD8) {
+        return false;
+    }
+    *thumbnail_out = malloc(jpeg_size);
+    if (*thumbnail_out == NULL) {
+        return false;
+    }
+    memcpy(*thumbnail_out, tiff + jpeg_offset, jpeg_size);
+    *thumbnail_size_out = jpeg_size;
+    return true;
+}
+
+static bool imgorg_browser_window_read_exif_thumbnail(
+    FILE *file,
+    byte **thumbnail_out,
+    size_t *thumbnail_size_out
+)
+{
+    int first;
+    int second;
+
+    *thumbnail_out = NULL;
+    *thumbnail_size_out = 0;
+    rewind(file);
+    first = fgetc(file);
+    second = fgetc(file);
+    if (first != 0xFF || second != 0xD8) {
+        return false;
+    }
+
+    for (;;) {
+        int marker_prefix;
+        int marker;
+        int length_high;
+        int length_low;
+        size_t payload_size;
+
+        do {
+            marker_prefix = fgetc(file);
+        } while (marker_prefix != EOF && marker_prefix != 0xFF);
+        if (marker_prefix == EOF) {
+            return false;
+        }
+        do {
+            marker = fgetc(file);
+        } while (marker == 0xFF);
+        if (marker == EOF || marker == 0xDA || marker == 0xD9) {
+            return false;
+        }
+        if (marker == 0x01 || (marker >= 0xD0 && marker <= 0xD7)) {
+            continue;
+        }
+        length_high = fgetc(file);
+        length_low = fgetc(file);
+        if (length_high == EOF || length_low == EOF) {
+            return false;
+        }
+        payload_size = ((size_t) length_high << 8) |
+            (size_t) length_low;
+        if (payload_size < 2) {
+            return false;
+        }
+        payload_size -= 2;
+        if (marker == 0xE1 && payload_size <= 1024 * 1024) {
+            byte *app1 = malloc(payload_size);
+            bool found;
+
+            if (app1 == NULL) {
+                return false;
+            }
+            if (fread(app1, payload_size, 1, file) != 1) {
+                free(app1);
+                return false;
+            }
+            found = imgorg_browser_window_extract_exif_thumbnail(
+                app1,
+                payload_size,
+                thumbnail_out,
+                thumbnail_size_out
+            );
+            free(app1);
+            if (found) {
+                return true;
+            }
+        } else if (fseek(file, (long) payload_size, SEEK_CUR) != 0) {
+            return false;
+        }
+    }
+}
+
+static osspriteop_area *imgorg_browser_window_decode_jpeg_file(
+    const char *file_name,
+    int maximum_width,
+    int maximum_height,
+    int *width_out,
+    int *height_out
+)
+{
+    struct jpeg_decompress_struct decoder;
+    imgorg_jpeg_error_state jpeg_error;
+    FILE *file;
+    volatile byte *decoded_pixels = NULL;
+    volatile byte *exif_thumbnail = NULL;
+    byte *exif_thumbnail_found = NULL;
+    size_t exif_thumbnail_size = 0;
+    volatile bool decoder_created = false;
+    long file_size;
+    int scale_denominator;
+    int decoded_width;
+    int decoded_height;
+    int decoded_components;
+    size_t decoded_row_bytes;
+    int output_width;
+    int output_height;
+    osspriteop_area *area;
+    osspriteop_header *sprite;
+    byte *output_pixels;
+    int y;
+
+    file = fopen(file_name, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    file_size = ftell(file);
+    if (file_size <= 0 || file_size > MAXIMUM_JPEG_SIZE ||
+        file_size > INT_MAX || fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    (void) imgorg_browser_window_read_exif_thumbnail(
+        file,
+        &exif_thumbnail_found,
+        &exif_thumbnail_size
+    );
+    exif_thumbnail = exif_thumbnail_found;
+    rewind(file);
+
+    decoder.err = jpeg_std_error(&jpeg_error.manager);
+    jpeg_error.manager.error_exit = imgorg_browser_window_jpeg_error_exit;
+    if (setjmp(jpeg_error.escape) != 0) {
+        if (decoder_created) {
+            jpeg_destroy_decompress(&decoder);
+        }
+        free((void *) decoded_pixels);
+        free((void *) exif_thumbnail);
+        fclose(file);
+        return NULL;
+    }
+
+    jpeg_create_decompress(&decoder);
+    decoder_created = true;
+    if (exif_thumbnail != NULL) {
+        jpeg_mem_src(
+            &decoder,
+            (const unsigned char *) exif_thumbnail,
+            (unsigned long) exif_thumbnail_size
+        );
+    } else {
+        jpeg_stdio_src(&decoder, file);
+    }
+    if (jpeg_read_header(&decoder, TRUE) != JPEG_HEADER_OK ||
+        decoder.image_width == 0 || decoder.image_height == 0 ||
+        decoder.image_width > MAXIMUM_IMAGE_DIMENSION ||
+        decoder.image_height > MAXIMUM_IMAGE_DIMENSION) {
+        jpeg_destroy_decompress(&decoder);
+        free((void *) exif_thumbnail);
+        fclose(file);
+        return NULL;
+    }
+
+    scale_denominator = 8;
+    while (scale_denominator > 1 &&
+        decoder.image_width / scale_denominator <
+            (unsigned int) maximum_width &&
+        decoder.image_height / scale_denominator <
+            (unsigned int) maximum_height) {
+        scale_denominator /= 2;
+    }
+    decoder.scale_num = 1;
+    decoder.scale_denom = scale_denominator;
+    decoder.out_color_space = JCS_RGB;
+    decoder.dct_method = JDCT_IFAST;
+    decoder.do_fancy_upsampling = FALSE;
+    if (!jpeg_start_decompress(&decoder)) {
+        jpeg_destroy_decompress(&decoder);
+        free((void *) exif_thumbnail);
+        fclose(file);
+        return NULL;
+    }
+
+    decoded_width = (int) decoder.output_width;
+    decoded_height = (int) decoder.output_height;
+    decoded_components = decoder.output_components;
+    if (decoded_width <= 0 || decoded_height <= 0 ||
+        decoded_components != 3 ||
+        (size_t) decoded_width > SIZE_MAX / (size_t) decoded_height /
+            (size_t) decoded_components) {
+        jpeg_destroy_decompress(&decoder);
+        free((void *) exif_thumbnail);
+        fclose(file);
+        return NULL;
+    }
+    decoded_row_bytes = (size_t) decoded_width * decoded_components;
+    decoded_pixels = malloc(decoded_row_bytes * decoded_height);
+    if (decoded_pixels == NULL) {
+        jpeg_destroy_decompress(&decoder);
+        free((void *) exif_thumbnail);
+        fclose(file);
+        return NULL;
+    }
+    while (decoder.output_scanline < decoder.output_height) {
+        JSAMPROW row = (byte *) decoded_pixels +
+            ((size_t) decoder.output_scanline * decoded_row_bytes);
+        if (jpeg_read_scanlines(&decoder, &row, 1) != 1) {
+            free((void *) decoded_pixels);
+            jpeg_destroy_decompress(&decoder);
+            free((void *) exif_thumbnail);
+            fclose(file);
+            return NULL;
+        }
+    }
+    (void) jpeg_finish_decompress(&decoder);
+    jpeg_destroy_decompress(&decoder);
+    decoder_created = false;
+    free((void *) exif_thumbnail);
+    exif_thumbnail = NULL;
+    fclose(file);
+
+    output_width = decoded_width;
+    output_height = decoded_height;
+    if (output_width > maximum_width || output_height > maximum_height) {
+        if ((long long) output_width * maximum_height >
+            (long long) output_height * maximum_width) {
+            output_height = (int) ((long long) output_height *
+                maximum_width / output_width);
+            output_width = maximum_width;
+        } else {
+            output_width = (int) ((long long) output_width *
+                maximum_height / output_height);
+            output_height = maximum_height;
+        }
+        if (output_width < 1) {
+            output_width = 1;
+        }
+        if (output_height < 1) {
+            output_height = 1;
+        }
+    }
+
+    area = imgorg_browser_window_create_sprite(output_width, output_height);
+    if (area == NULL) {
+        free((void *) decoded_pixels);
+        return NULL;
+    }
+    sprite = (osspriteop_header *) ((byte *) area + area->first);
+    output_pixels = (byte *) sprite + sprite->image;
+    for (y = 0; y < output_height; ++y) {
+        int source_y = (int) ((long long) y * decoded_height /
+            output_height);
+        int x;
+
+        for (x = 0; x < output_width; ++x) {
+            int source_x = (int) ((long long) x * decoded_width /
+                output_width);
+            const byte *source = (const byte *) decoded_pixels +
+                ((size_t) source_y * decoded_row_bytes) +
+                ((size_t) source_x * decoded_components);
+            byte *destination = output_pixels +
+                (((size_t) y * output_width + x) * 4);
+
+            destination[0] = source[0];
+            destination[1] = source[1];
+            destination[2] = source[2];
+            destination[3] = 0;
+        }
+    }
+    free((void *) decoded_pixels);
+
+    *width_out = output_width;
+    *height_out = output_height;
+    return area;
+}
+
 static void imgorg_browser_window_clear_thumbnails(
     imgorg_browser_window *browser
 )
@@ -477,6 +970,28 @@ static void imgorg_browser_window_clear_thumbnails(
     browser->thumbnail_count = 0;
     browser->thumbnail_capacity = 0;
     browser->thumbnail_cursor = 0;
+    browser->thumbnail_priority_start = 0;
+    browser->thumbnail_priority_end = THUMBNAIL_COLUMNS * 3;
+}
+
+static void imgorg_browser_window_set_thumbnail_priority(
+    imgorg_browser_window *browser,
+    int yscroll,
+    int visible_height
+)
+{
+    const int row_height = THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP;
+    size_t first_row;
+    size_t visible_rows;
+
+    if (yscroll > 0) {
+        yscroll = 0;
+    }
+    first_row = (size_t) (-yscroll / row_height);
+    visible_rows = (size_t) ((visible_height + row_height - 1) / row_height);
+    browser->thumbnail_priority_start = first_row * THUMBNAIL_COLUMNS;
+    browser->thumbnail_priority_end =
+        (first_row + visible_rows + 1) * THUMBNAIL_COLUMNS;
 }
 
 static bool imgorg_browser_window_ensure_thumbnail_slots(
@@ -520,6 +1035,49 @@ static bool imgorg_browser_window_ensure_thumbnail_slots(
     }
     browser->thumbnail_count = browser->images.count;
     return true;
+}
+
+static size_t imgorg_browser_window_next_thumbnail_index(
+    imgorg_browser_window *browser
+)
+{
+    size_t index;
+    size_t priority_end = browser->thumbnail_priority_end;
+
+    if (priority_end > browser->images.count) {
+        priority_end = browser->images.count;
+    }
+    for (index = browser->thumbnail_priority_start;
+         index < priority_end;
+         ++index) {
+        const imgorg_image_entry *entry;
+
+        if (browser->thumbnails[index].attempted) {
+            continue;
+        }
+        entry = imgorg_image_list_get(&browser->images, index);
+        if (entry->format == IMGORG_IMAGE_FORMAT_PNG ||
+            entry->format == IMGORG_IMAGE_FORMAT_JPEG) {
+            return index;
+        }
+        browser->thumbnails[index].attempted = true;
+    }
+
+    while (browser->thumbnail_cursor < browser->images.count) {
+        const imgorg_image_entry *entry;
+
+        index = browser->thumbnail_cursor++;
+        if (browser->thumbnails[index].attempted) {
+            continue;
+        }
+        entry = imgorg_image_list_get(&browser->images, index);
+        if (entry->format == IMGORG_IMAGE_FORMAT_PNG ||
+            entry->format == IMGORG_IMAGE_FORMAT_JPEG) {
+            return index;
+        }
+        browser->thumbnails[index].attempted = true;
+    }
+    return SIZE_MAX;
 }
 
 os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
@@ -629,8 +1187,18 @@ os_error *imgorg_browser_window_handle_open_request(
     }
 
     if (browser == NULL || open == NULL || handled == NULL ||
-        open->w != browser->handle ||
-        browser->image_sprite_area == NULL) {
+        open->w != browser->handle) {
+        return NULL;
+    }
+
+    if (browser->image_sprite_area == NULL) {
+        if (browser->directory_path[0] != '\0') {
+            imgorg_browser_window_set_thumbnail_priority(
+                browser,
+                open->yscroll,
+                open->visible.y1 - open->visible.y0
+            );
+        }
         return NULL;
     }
 
@@ -861,20 +1429,30 @@ os_error *imgorg_browser_window_scan_step(imgorg_browser_window *browser)
         }
     }
 
-    while (browser->thumbnail_cursor < browser->images.count) {
-        size_t index = browser->thumbnail_cursor++;
+    if (browser->thumbnail_count < browser->images.count &&
+        !imgorg_browser_window_ensure_thumbnail_slots(browser)) {
+        return imgorg_browser_window_error(
+            "There is not enough memory for the thumbnail list"
+        );
+    }
+    {
+        size_t index = imgorg_browser_window_next_thumbnail_index(browser);
+        if (index != SIZE_MAX) {
         const imgorg_image_entry *entry =
             imgorg_image_list_get(&browser->images, index);
         imgorg_thumbnail *thumbnail;
+        bool thumbnail_from_cache;
 
-        if (!imgorg_browser_window_ensure_thumbnail_slots(browser)) {
-            return imgorg_browser_window_error(
-                "There is not enough memory for the thumbnail list"
-            );
-        }
         thumbnail = &browser->thumbnails[index];
         thumbnail->attempted = true;
-        if (entry->format == IMGORG_IMAGE_FORMAT_PNG) {
+        thumbnail->sprite_area = imgorg_thumbnail_cache_load(
+            entry,
+            &thumbnail->width,
+            &thumbnail->height
+        );
+        thumbnail_from_cache = thumbnail->sprite_area != NULL;
+        if (thumbnail->sprite_area == NULL &&
+            entry->format == IMGORG_IMAGE_FORMAT_PNG) {
             thumbnail->sprite_area =
                 imgorg_browser_window_decode_png_file(
                     entry->path,
@@ -883,13 +1461,31 @@ os_error *imgorg_browser_window_scan_step(imgorg_browser_window *browser)
                     &thumbnail->width,
                     &thumbnail->height
                 );
-            if (thumbnail->sprite_area != NULL) {
-                thumbnail->sprite = (osspriteop_header *)
-                    ((byte *) thumbnail->sprite_area +
-                    thumbnail->sprite_area->first);
-                thumbnail_completed = true;
+        } else if (thumbnail->sprite_area == NULL &&
+            entry->format == IMGORG_IMAGE_FORMAT_JPEG) {
+            thumbnail->sprite_area =
+                imgorg_browser_window_decode_jpeg_file(
+                    entry->path,
+                    THUMBNAIL_MAXIMUM_WIDTH,
+                    THUMBNAIL_MAXIMUM_HEIGHT,
+                    &thumbnail->width,
+                    &thumbnail->height
+                );
+        }
+        if (thumbnail->sprite_area != NULL) {
+            thumbnail->sprite = (osspriteop_header *)
+                ((byte *) thumbnail->sprite_area +
+                thumbnail->sprite_area->first);
+            thumbnail_completed = true;
+            if (!thumbnail_from_cache) {
+                (void) imgorg_thumbnail_cache_save(
+                    entry,
+                    thumbnail->sprite_area,
+                    thumbnail->width,
+                    thumbnail->height
+                );
             }
-            break;
+        }
         }
     }
 
@@ -1080,6 +1676,11 @@ os_error *imgorg_browser_window_handle_scroll(
         } else if (open.yscroll < minimum_scroll) {
             open.yscroll = minimum_scroll;
         }
+        imgorg_browser_window_set_thumbnail_priority(
+            browser,
+            open.yscroll,
+            visible_height
+        );
         return xwimp_open_window(&open);
     }
 

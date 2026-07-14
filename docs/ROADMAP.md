@@ -16,11 +16,11 @@
 ## 0.2 — thumbnails
 
 - [ ] Sprite thumbnail loading
-- [ ] JPEG thumbnail decoding
+- [x] JPEG thumbnail decoding
 - [x] PNG thumbnail decoding
 - [x] progressive thumbnail queue
 - [x] memory thumbnail store
-- [ ] persistent thumbnail cache
+- [x] persistent thumbnail cache
 - [ ] selectable thumbnail cells
 
 ## 0.3 — viewer

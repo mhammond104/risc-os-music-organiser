@@ -173,6 +173,8 @@ os_error *imgorg_directory_scanner_step(
                     full_path,
                     info->name,
                     info->size < 0 ? 0u : (uint64_t) info->size,
+                    info->load_addr,
+                    info->exec_addr,
                     info->file_type
                 )) {
                 if (!imgorg_image_list_append(images, &entry)) {

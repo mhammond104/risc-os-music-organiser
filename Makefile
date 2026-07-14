@@ -3,7 +3,7 @@ ELF2AIF ?= elf2aif
 CPPFLAGS := -Iinclude -I$(GCCSDK_INSTALL_ENV)/include
 CFLAGS ?= -O2 -Wall -Wextra -pedantic -std=c11
 LDFLAGS ?= -L$(GCCSDK_INSTALL_ENV)/lib
-LDLIBS ?= -lpng16 -lz -lOSLib32
+LDLIBS ?= -lpng16 -ljpeg -lz -lOSLib32
 
 BUILD_DIR := build/riscos
 ELF_TARGET := $(BUILD_DIR)/RunImage.elf
@@ -16,7 +16,8 @@ SOURCES := \
 	src/browser_window.c \
 	src/directory_scanner.c \
 	src/image_entry.c \
-	src/image_list.c
+	src/image_list.c \
+	src/thumbnail_cache.c
 
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
