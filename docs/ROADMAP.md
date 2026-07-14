@@ -21,11 +21,12 @@
 - [x] progressive thumbnail queue
 - [x] memory thumbnail store
 - [x] persistent thumbnail cache
-- [ ] selectable thumbnail cells
+- [x] selectable thumbnail cells
 
 ## 0.3 — viewer
 
 - [ ] separate image windows
+- [x] open PNG and JPEG thumbnails in the viewer
 - [ ] fit-to-window mode (single-image preview complete)
 - [ ] zoom and pan (single-image preview complete)
 - [ ] remove viewer scroll bars; panning provides navigation within zoomed images

@@ -105,6 +105,7 @@ static os_error *imgorg_application_handle_data_load(
 {
     wimp_message_data_xfer *transfer = &message->data.data_xfer;
     fileswitch_object_type object_type;
+    bits file_type;
     os_error *error;
 
     if (!((transfer->w == wimp_ICON_BAR &&
@@ -120,7 +121,7 @@ static os_error *imgorg_application_handle_data_load(
         NULL,
         NULL,
         NULL,
-        NULL
+        &file_type
     );
     if (error == NULL && object_type == fileswitch_IS_DIR) {
         error = imgorg_browser_window_load_directory(
@@ -128,9 +129,10 @@ static os_error *imgorg_application_handle_data_load(
             transfer->file_name
         );
     } else if (error == NULL) {
-        error = imgorg_browser_window_load_png(
+        error = imgorg_browser_window_load_image(
             &application->browser,
-            transfer->file_name
+            transfer->file_name,
+            imgorg_image_format_from_filetype(file_type)
         );
     }
     if (error != NULL) {
@@ -255,8 +257,19 @@ os_error *imgorg_application_run(imgorg_application *application)
         }
 
         case wimp_CLOSE_WINDOW_REQUEST:
-            error = xwimp_close_window(block.close.w);
+        {
+            bool handled = false;
+
+            error = imgorg_browser_window_handle_close_request(
+                &application->browser,
+                block.close.w,
+                &handled
+            );
+            if (error == NULL && !handled) {
+                error = xwimp_close_window(block.close.w);
+            }
             break;
+        }
 
         case wimp_MOUSE_CLICK:
             error = imgorg_application_handle_mouse_click(

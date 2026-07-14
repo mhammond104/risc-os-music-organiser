@@ -13,7 +13,7 @@ This repository contains the first application milestone:
 - directory drag-and-drop
 - incremental enumeration of JPEG, PNG and Sprite files
 - progressive in-memory PNG and JPEG thumbnails with Sprite placeholders
-- drag-and-drop loading and fit-to-window display of one PNG image
+- drag-and-drop loading and fit-to-window display of PNG and JPEG images
 - clean `Message_Quit` handling
 - portable image-list and directory-entry model
 - host-side unit tests for the portable model
@@ -23,8 +23,9 @@ Directory contents are enumerated incrementally during null-event time. PNG and
 JPEG thumbnails are progressively decoded into bounded in-memory sprites, with
 visible rows processed first. JPEGs use an embedded EXIF preview when available;
 generated thumbnails are cached below `<Choices$Write>.ImgOrg.Thumbs` for later
-visits. Sprite files retain labelled placeholders. Full PNG display is decoded
-by the statically linked libpng library and plotted as a native RISC OS sprite.
+visits. Sprite files retain labelled placeholders. Full PNG and JPEG display is
+decoded by the statically linked image libraries and plotted as a native RISC OS
+sprite.
 
 ## Intended features
 
@@ -100,13 +101,17 @@ Copy the complete `app/!ImgOrg` directory to a RISC OS filesystem preserving
 RISC OS filetypes. How filetypes are represented depends on the transfer method
 and emulator/tooling in use.
 
-## Open a PNG
+## Open an image
 
-Launch Image Organiser, then drag a directory or PNG file onto either its
+Launch Image Organiser, then drag a directory, PNG or JPEG file onto either its
 iconbar icon or its browser window. A directory becomes the browser's current
-source. A PNG is loaded into memory and scaled to fit the window. Dropping
-another source replaces the current one. For a PNG, the window title shows the
-image name and the current zoom percentage, or `Fit` in fit-to-window mode.
+source. Double-clicking a PNG or JPEG thumbnail opens it in the same image
+viewer. An image is loaded into memory and scaled to fit the window. Dropping
+another source replaces the current one. The window title shows the image name
+and the current zoom percentage, or `Fit` in fit-to-window mode. Closing an
+image opened from a thumbnail returns to the same populated directory browser.
+Single-clicking a thumbnail highlights its cell, and a loading window remains
+visible while a full-resolution image is decoded.
 Directory browsers show real PNG and JPEG thumbnails and labelled format
 placeholders for Sprite files while Sprite loading is developed.
 

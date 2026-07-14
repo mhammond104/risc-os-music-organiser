@@ -25,3 +25,9 @@
 - Reduced-resolution libjpeg-turbo thumbnails in the in-memory sprite store.
 - Embedded EXIF JPEG previews, visible-row prioritisation and a persistent,
   source-validated thumbnail cache.
+- Full JPEG drag-and-drop viewing and double-click opening of PNG and JPEG
+  thumbnails in the viewer.
+- Double-click-aware thumbnail input and restoration of the populated directory
+  browser when a thumbnail-opened viewer is closed.
+- Single-click thumbnail highlighting and an immediate loading popup for
+  full-resolution image decoding.
