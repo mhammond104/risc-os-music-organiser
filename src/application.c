@@ -198,7 +198,9 @@ os_error *imgorg_application_run(imgorg_application *application)
 
     while (!application->quit && error == NULL) {
         if (application->browser.dragging ||
-            imgorg_browser_window_is_scanning(&application->browser)) {
+            imgorg_browser_window_has_background_work(
+                &application->browser
+            )) {
             os_t now;
 
             error = xos_read_monotonic_time(&now);

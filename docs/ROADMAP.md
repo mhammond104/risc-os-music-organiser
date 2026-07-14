@@ -17,9 +17,9 @@
 
 - [ ] Sprite thumbnail loading
 - [ ] JPEG thumbnail decoding
-- [ ] PNG thumbnail decoding (single-image preview complete)
-- [ ] progressive thumbnail queue
-- [ ] memory thumbnail store
+- [x] PNG thumbnail decoding
+- [x] progressive thumbnail queue
+- [x] memory thumbnail store
 - [ ] persistent thumbnail cache
 - [ ] selectable thumbnail cells
 

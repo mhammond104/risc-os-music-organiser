@@ -39,11 +39,13 @@ batches during null-event time and appends only supported filetypes, so large
 directories do not block the desktop. Each batch updates the browser's
 scrollable placeholder grid immediately.
 
-### Thumbnail pipeline — next milestone
+### Thumbnail pipeline
 
-A queue will decode and scale a limited number of images during null-event
-time. Completed thumbnails will be stored as sprites and redraw requests will
-be issued for affected cells.
+The browser decodes one queued PNG during each null-event slice, downsamples it
+to a bounded native sprite and retains it in memory for the current directory.
+Completed thumbnails trigger redraws while JPEG and Sprite entries continue to
+use labelled placeholders. Persistent caching and the remaining decoders are
+later stages of this pipeline.
 
 ### Catalogue — later milestone
 

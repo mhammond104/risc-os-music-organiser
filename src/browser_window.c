@@ -32,7 +32,9 @@ enum {
     THUMBNAIL_GAP = 24,
     THUMBNAIL_MARGIN = 32,
     THUMBNAIL_IMAGE_INSET = 16,
-    THUMBNAIL_LABEL_HEIGHT = 48
+    THUMBNAIL_LABEL_HEIGHT = 48,
+    THUMBNAIL_MAXIMUM_WIDTH = 160,
+    THUMBNAIL_MAXIMUM_HEIGHT = 112
 };
 
 static os_error browser_error;
@@ -253,6 +255,8 @@ static os_error *imgorg_browser_window_apply_zoom(
 static osspriteop_area *imgorg_browser_window_decode_png(
     const byte *data,
     size_t data_size,
+    int maximum_width,
+    int maximum_height,
     int *width_out,
     int *height_out
 )
@@ -261,10 +265,13 @@ static osspriteop_area *imgorg_browser_window_decode_png(
     byte *pixels;
     osspriteop_area *area;
     osspriteop_header *sprite;
-    size_t pixel_count;
-    size_t pixel_bytes;
+    size_t source_pixel_count;
+    size_t source_pixel_bytes;
+    size_t output_pixel_bytes;
     size_t area_size;
     size_t index;
+    int output_width;
+    int output_height;
 
     memset(&image, 0, sizeof(image));
     image.version = PNG_IMAGE_VERSION;
@@ -281,8 +288,8 @@ static osspriteop_area *imgorg_browser_window_decode_png(
     }
 
     image.format = PNG_FORMAT_RGBA;
-    pixel_bytes = PNG_IMAGE_SIZE(image);
-    pixels = malloc(pixel_bytes);
+    source_pixel_bytes = PNG_IMAGE_SIZE(image);
+    pixels = malloc(source_pixel_bytes);
     if (pixels == NULL) {
         png_image_free(&image);
         return NULL;
@@ -294,8 +301,8 @@ static osspriteop_area *imgorg_browser_window_decode_png(
         return NULL;
     }
 
-    pixel_count = (size_t) image.width * image.height;
-    for (index = 0; index < pixel_count; ++index) {
+    source_pixel_count = (size_t) image.width * image.height;
+    for (index = 0; index < source_pixel_count; ++index) {
         byte *pixel = pixels + (index * 4);
         unsigned int alpha = pixel[3];
 
@@ -308,7 +315,30 @@ static osspriteop_area *imgorg_browser_window_decode_png(
         pixel[3] = 0;
     }
 
-    area_size = sizeof(*area) + sizeof(*sprite) + pixel_bytes;
+    output_width = (int) image.width;
+    output_height = (int) image.height;
+    if (maximum_width > 0 && maximum_height > 0 &&
+        (output_width > maximum_width || output_height > maximum_height)) {
+        if ((long long) output_width * maximum_height >
+            (long long) output_height * maximum_width) {
+            output_height = (int) ((long long) output_height *
+                maximum_width / output_width);
+            output_width = maximum_width;
+        } else {
+            output_width = (int) ((long long) output_width *
+                maximum_height / output_height);
+            output_height = maximum_height;
+        }
+        if (output_width < 1) {
+            output_width = 1;
+        }
+        if (output_height < 1) {
+            output_height = 1;
+        }
+    }
+
+    output_pixel_bytes = (size_t) output_width * output_height * 4;
+    area_size = sizeof(*area) + sizeof(*sprite) + output_pixel_bytes;
     if (area_size > INT_MAX) {
         free(pixels);
         png_image_free(&image);
@@ -329,23 +359,167 @@ static osspriteop_area *imgorg_browser_window_decode_png(
     area->used = (int) area_size;
 
     sprite = (osspriteop_header *) ((byte *) area + area->first);
-    sprite->size = sizeof(*sprite) + (int) pixel_bytes;
+    sprite->size = sizeof(*sprite) + (int) output_pixel_bytes;
     memcpy(sprite->name, "imgorg", 7);
-    sprite->width = (int) image.width - 1;
-    sprite->height = (int) image.height - 1;
+    sprite->width = output_width - 1;
+    sprite->height = output_height - 1;
     sprite->left_bit = 0;
     sprite->right_bit = 31;
     sprite->image = sizeof(*sprite);
     sprite->mask = sizeof(*sprite);
     sprite->mode = (os_mode) imgorg_browser_window_sprite_mode();
 
-    memcpy((byte *) sprite + sprite->image, pixels, pixel_bytes);
+    if (output_width == (int) image.width &&
+        output_height == (int) image.height) {
+        memcpy(
+            (byte *) sprite + sprite->image,
+            pixels,
+            output_pixel_bytes
+        );
+    } else {
+        byte *output = (byte *) sprite + sprite->image;
+        int y;
+
+        for (y = 0; y < output_height; ++y) {
+            int source_y = (int) ((long long) y * image.height /
+                output_height);
+            int x;
+
+            for (x = 0; x < output_width; ++x) {
+                int source_x = (int) ((long long) x * image.width /
+                    output_width);
+                memcpy(
+                    output + (((size_t) y * output_width + x) * 4),
+                    pixels + (((size_t) source_y * image.width +
+                        source_x) * 4),
+                    4
+                );
+            }
+        }
+    }
     free(pixels);
 
-    *width_out = (int) image.width;
-    *height_out = (int) image.height;
+    *width_out = output_width;
+    *height_out = output_height;
     png_image_free(&image);
     return area;
+}
+
+static osspriteop_area *imgorg_browser_window_decode_png_file(
+    const char *file_name,
+    int maximum_width,
+    int maximum_height,
+    int *width_out,
+    int *height_out
+)
+{
+    static const byte png_signature[] = {
+        0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A
+    };
+    FILE *file;
+    byte *data;
+    long file_size;
+    size_t bytes_read;
+    osspriteop_area *area;
+
+    file = fopen(file_name, "rb");
+    if (file == NULL) {
+        return NULL;
+    }
+    if (fseek(file, 0, SEEK_END) != 0) {
+        fclose(file);
+        return NULL;
+    }
+    file_size = ftell(file);
+    if (file_size < (long) sizeof(png_signature) ||
+        file_size > MAXIMUM_PNG_SIZE || file_size > INT_MAX ||
+        fseek(file, 0, SEEK_SET) != 0) {
+        fclose(file);
+        return NULL;
+    }
+
+    data = malloc((size_t) file_size);
+    if (data == NULL) {
+        fclose(file);
+        return NULL;
+    }
+    bytes_read = fread(data, 1, (size_t) file_size, file);
+    fclose(file);
+    if (bytes_read != (size_t) file_size ||
+        memcmp(data, png_signature, sizeof(png_signature)) != 0) {
+        free(data);
+        return NULL;
+    }
+
+    area = imgorg_browser_window_decode_png(
+        data,
+        (size_t) file_size,
+        maximum_width,
+        maximum_height,
+        width_out,
+        height_out
+    );
+    free(data);
+    return area;
+}
+
+static void imgorg_browser_window_clear_thumbnails(
+    imgorg_browser_window *browser
+)
+{
+    size_t index;
+
+    for (index = 0; index < browser->thumbnail_count; ++index) {
+        free(browser->thumbnails[index].sprite_area);
+    }
+    free(browser->thumbnails);
+    browser->thumbnails = NULL;
+    browser->thumbnail_count = 0;
+    browser->thumbnail_capacity = 0;
+    browser->thumbnail_cursor = 0;
+}
+
+static bool imgorg_browser_window_ensure_thumbnail_slots(
+    imgorg_browser_window *browser
+)
+{
+    imgorg_thumbnail *thumbnails;
+    size_t new_capacity;
+    size_t old_count = browser->thumbnail_count;
+
+    if (browser->images.count > browser->thumbnail_capacity) {
+        new_capacity = browser->thumbnail_capacity == 0 ?
+            32 : browser->thumbnail_capacity;
+        while (new_capacity < browser->images.count) {
+            if (new_capacity > SIZE_MAX / 2) {
+                return false;
+            }
+            new_capacity *= 2;
+        }
+        if (new_capacity > SIZE_MAX / sizeof(*thumbnails)) {
+            return false;
+        }
+        thumbnails = realloc(
+            browser->thumbnails,
+            new_capacity * sizeof(*thumbnails)
+        );
+        if (thumbnails == NULL) {
+            return false;
+        }
+        browser->thumbnails = thumbnails;
+        browser->thumbnail_capacity = new_capacity;
+    }
+
+    if (browser->images.count > old_count) {
+        memset(
+            browser->thumbnails + old_count,
+            0,
+            (browser->images.count - old_count) *
+                sizeof(*browser->thumbnails)
+        );
+    }
+    browser->thumbnail_count = browser->images.count;
+    return true;
 }
 
 os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
@@ -544,6 +718,8 @@ os_error *imgorg_browser_window_load_png(
     new_area = imgorg_browser_window_decode_png(
         data,
         (size_t) file_size,
+        MAXIMUM_IMAGE_DIMENSION,
+        MAXIMUM_IMAGE_DIMENSION,
         &width,
         &height
     );
@@ -565,6 +741,7 @@ os_error *imgorg_browser_window_load_png(
     browser->directory_name[0] = '\0';
     browser->directory_path[0] = '\0';
     browser->scanner.active = false;
+    imgorg_browser_window_clear_thumbnails(browser);
     imgorg_image_list_clear(&browser->images);
     imgorg_browser_window_copy_leafname(
         browser->image_name,
@@ -614,6 +791,7 @@ os_error *imgorg_browser_window_load_directory(
     browser->image_height = 0;
     browser->image_name[0] = '\0';
     browser->dragging = false;
+    imgorg_browser_window_clear_thumbnails(browser);
     imgorg_image_list_clear(&browser->images);
     if (!imgorg_directory_scanner_start(&browser->scanner, directory_path)) {
         browser->directory_path[0] = '\0';
@@ -636,38 +814,86 @@ os_error *imgorg_browser_window_load_directory(
     return imgorg_browser_window_redraw_all(browser);
 }
 
-bool imgorg_browser_window_is_scanning(
+bool imgorg_browser_window_has_background_work(
     const imgorg_browser_window *browser
 )
 {
-    return browser != NULL && browser->scanner.active;
+    return browser != NULL && (browser->scanner.active ||
+        browser->thumbnail_cursor < browser->images.count);
 }
 
 os_error *imgorg_browser_window_scan_step(imgorg_browser_window *browser)
 {
     os_error *error;
-    bool changed;
+    bool changed = false;
     bool was_active;
+    bool thumbnail_completed = false;
 
-    if (browser == NULL || !browser->scanner.active) {
+    if (browser == NULL) {
         return NULL;
     }
 
     was_active = browser->scanner.active;
-    error = imgorg_directory_scanner_step(
-        &browser->scanner,
-        &browser->images,
-        &changed
-    );
-    if (error != NULL) {
-        return error;
+    if (browser->scanner.active) {
+        error = imgorg_directory_scanner_step(
+            &browser->scanner,
+            &browser->images,
+            &changed
+        );
+        if (error != NULL) {
+            return error;
+        }
     }
 
     if (changed) {
+        if (!imgorg_browser_window_ensure_thumbnail_slots(browser)) {
+            return imgorg_browser_window_error(
+                "There is not enough memory for the thumbnail list"
+            );
+        }
         error = imgorg_browser_window_update_directory_extent(browser);
         if (error != NULL) {
             return error;
         }
+        error = imgorg_browser_window_redraw_all(browser);
+        if (error != NULL) {
+            return error;
+        }
+    }
+
+    while (browser->thumbnail_cursor < browser->images.count) {
+        size_t index = browser->thumbnail_cursor++;
+        const imgorg_image_entry *entry =
+            imgorg_image_list_get(&browser->images, index);
+        imgorg_thumbnail *thumbnail;
+
+        if (!imgorg_browser_window_ensure_thumbnail_slots(browser)) {
+            return imgorg_browser_window_error(
+                "There is not enough memory for the thumbnail list"
+            );
+        }
+        thumbnail = &browser->thumbnails[index];
+        thumbnail->attempted = true;
+        if (entry->format == IMGORG_IMAGE_FORMAT_PNG) {
+            thumbnail->sprite_area =
+                imgorg_browser_window_decode_png_file(
+                    entry->path,
+                    THUMBNAIL_MAXIMUM_WIDTH,
+                    THUMBNAIL_MAXIMUM_HEIGHT,
+                    &thumbnail->width,
+                    &thumbnail->height
+                );
+            if (thumbnail->sprite_area != NULL) {
+                thumbnail->sprite = (osspriteop_header *)
+                    ((byte *) thumbnail->sprite_area +
+                    thumbnail->sprite_area->first);
+                thumbnail_completed = true;
+            }
+            break;
+        }
+    }
+
+    if (thumbnail_completed) {
         error = imgorg_browser_window_redraw_all(browser);
         if (error != NULL) {
             return error;
@@ -1022,6 +1248,63 @@ static void imgorg_browser_window_make_label(
     }
 }
 
+static os_error *imgorg_browser_window_plot_thumbnail(
+    const imgorg_thumbnail *thumbnail,
+    const os_box *preview
+)
+{
+    int x_eigen;
+    int y_eigen;
+    int available_width;
+    int available_height;
+    int target_width;
+    int target_height;
+    int x;
+    int y;
+    os_factors factors;
+
+    if (thumbnail == NULL || thumbnail->sprite_area == NULL ||
+        thumbnail->width <= 0 || thumbnail->height <= 0) {
+        return NULL;
+    }
+
+    imgorg_browser_window_read_eigen_factors(&x_eigen, &y_eigen);
+    available_width = (preview->x1 - preview->x0) >> x_eigen;
+    available_height = (preview->y1 - preview->y0) >> y_eigen;
+    if ((long long) available_width * thumbnail->height <=
+        (long long) available_height * thumbnail->width) {
+        target_width = available_width;
+        target_height = (int) ((long long) thumbnail->height *
+            target_width / thumbnail->width);
+    } else {
+        target_height = available_height;
+        target_width = (int) ((long long) thumbnail->width *
+            target_height / thumbnail->height);
+    }
+    if (target_width <= 0 || target_height <= 0) {
+        return NULL;
+    }
+
+    x = preview->x0 +
+        ((preview->x1 - preview->x0 - (target_width << x_eigen)) / 2);
+    y = preview->y0 +
+        ((preview->y1 - preview->y0 - (target_height << y_eigen)) / 2);
+    factors.xmul = target_width;
+    factors.ymul = target_height;
+    factors.xdiv = thumbnail->width;
+    factors.ydiv = thumbnail->height;
+    return xosspriteop_put_sprite_scaled(
+        osspriteop_PTR,
+        thumbnail->sprite_area,
+        (osspriteop_id) thumbnail->sprite,
+        x,
+        y,
+        os_ACTION_OVERWRITE,
+        &factors,
+        NULL
+    );
+}
+
 static os_error *imgorg_browser_window_plot_directory(
     const imgorg_browser_window *browser,
     const wimp_draw *draw
@@ -1090,12 +1373,20 @@ static os_error *imgorg_browser_window_plot_directory(
         );
         imgorg_browser_window_fill_box(&preview);
 
-        error = xwimptextop_paint(
-            0,
-            imgorg_browser_window_format_name(entry->format),
-            preview.x0 + 16,
-            preview.y0 + ((preview.y1 - preview.y0) / 2)
-        );
+        if (index < browser->thumbnail_count &&
+            browser->thumbnails[index].sprite_area != NULL) {
+            error = imgorg_browser_window_plot_thumbnail(
+                &browser->thumbnails[index],
+                &preview
+            );
+        } else {
+            error = xwimptextop_paint(
+                0,
+                imgorg_browser_window_format_name(entry->format),
+                preview.x0 + 16,
+                preview.y0 + ((preview.y1 - preview.y0) / 2)
+            );
+        }
         if (error != NULL) {
             return error;
         }
@@ -1242,6 +1533,7 @@ void imgorg_browser_window_destroy(imgorg_browser_window *browser)
         (void) xwimp_delete_window(browser->handle);
     }
     free(browser->image_sprite_area);
+    imgorg_browser_window_clear_thumbnails(browser);
     imgorg_image_list_destroy(&browser->images);
     imgorg_directory_scanner_init(&browser->scanner);
     browser->image_sprite_area = NULL;
