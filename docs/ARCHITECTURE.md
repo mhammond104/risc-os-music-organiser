@@ -53,8 +53,9 @@ queue. PNGs use the linked libpng decoder. JPEGs use an embedded EXIF preview
 when present, otherwise libjpeg-turbo's reduced-resolution IDCT before a final
 thumbnail-sized downsample. Completed thumbnails are stored below
 `<Choices$Write>.ImgOrg.Thumbs`; cache keys and headers include the source path,
-size and RISC OS timestamp so stale entries are ignored. Sprite entries continue
-to use labelled placeholders.
+size and RISC OS timestamp so stale entries are ignored. Native Sprite files are
+loaded into temporary user areas and rendered through SpriteOp into the same
+bounded 32-bpp thumbnail representation before the source area is released.
 
 ### Catalogue — later milestone
 

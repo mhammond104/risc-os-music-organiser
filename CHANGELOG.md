@@ -31,3 +31,5 @@
   browser when a thumbnail-opened viewer is closed.
 - Single-click thumbnail highlighting and an immediate loading popup for
   full-resolution image decoding.
+- Native Sprite-file thumbnails rendered into the bounded progressive thumbnail
+  and persistent-cache pipeline.

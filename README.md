@@ -12,7 +12,7 @@ This repository contains the first application milestone:
 - browser window shell
 - directory drag-and-drop
 - incremental enumeration of JPEG, PNG and Sprite files
-- progressive in-memory PNG and JPEG thumbnails with Sprite placeholders
+- progressive PNG, JPEG and Sprite thumbnails
 - drag-and-drop loading and fit-to-window display of PNG and JPEG images
 - clean `Message_Quit` handling
 - portable image-list and directory-entry model
@@ -23,9 +23,9 @@ Directory contents are enumerated incrementally during null-event time. PNG and
 JPEG thumbnails are progressively decoded into bounded in-memory sprites, with
 visible rows processed first. JPEGs use an embedded EXIF preview when available;
 generated thumbnails are cached below `<Choices$Write>.ImgOrg.Thumbs` for later
-visits. Sprite files retain labelled placeholders. Full PNG and JPEG display is
-decoded by the statically linked image libraries and plotted as a native RISC OS
-sprite.
+visits. Native Sprite files are loaded through SpriteOp and rendered into the
+same bounded thumbnail format. Full PNG and JPEG display is decoded by the
+statically linked image libraries and plotted as a native RISC OS sprite.
 
 ## Intended features
 
@@ -112,8 +112,7 @@ and the current zoom percentage, or `Fit` in fit-to-window mode. Closing an
 image opened from a thumbnail returns to the same populated directory browser.
 Single-clicking a thumbnail highlights its cell, and a loading window remains
 visible while a full-resolution image is decoded.
-Directory browsers show real PNG and JPEG thumbnails and labelled format
-placeholders for Sprite files while Sprite loading is developed.
+Directory browsers show real PNG, JPEG and Sprite thumbnails.
 
 With an image open:
 

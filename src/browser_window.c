@@ -22,6 +22,7 @@ enum {
 enum {
     MAXIMUM_PNG_SIZE = 64 * 1024 * 1024,
     MAXIMUM_JPEG_SIZE = 64 * 1024 * 1024,
+    MAXIMUM_SPRITE_FILE_SIZE = 64 * 1024 * 1024,
     MAXIMUM_IMAGE_DIMENSION = 8192,
     IMAGE_BORDER = 32,
     SPRITE_DPI = 90,
@@ -961,6 +962,227 @@ static osspriteop_area *imgorg_browser_window_decode_jpeg_file(
     return area;
 }
 
+static osspriteop_area *imgorg_browser_window_decode_sprite_file(
+    const imgorg_image_entry *entry,
+    int maximum_width,
+    int maximum_height,
+    int *width_out,
+    int *height_out
+)
+{
+    osspriteop_area *source_area = NULL;
+    osspriteop_header *source_sprite;
+    osspriteop_area *output_area = NULL;
+    osspriteop_header *output_sprite;
+    osspriteop_save_area *save_area = NULL;
+    osspriteop_trans_tab *translation = NULL;
+    os_error *error;
+    osbool has_mask;
+    os_factors factors;
+    size_t area_size;
+    int source_width;
+    int source_height;
+    int output_width;
+    int output_height;
+    int save_area_size;
+    int translation_size = 0;
+    int context0;
+    int context1;
+    int context2;
+    int context3;
+    bool output_switched = false;
+
+    if (entry == NULL || entry->size_bytes < 12 ||
+        entry->size_bytes > MAXIMUM_SPRITE_FILE_SIZE ||
+        entry->size_bytes > (uint64_t) INT_MAX - 4) {
+        return NULL;
+    }
+    area_size = (size_t) entry->size_bytes + 4;
+    source_area = malloc(area_size);
+    if (source_area == NULL) {
+        return NULL;
+    }
+    source_area->size = (int) area_size;
+    error = xosspriteop_load_sprite_file(
+        osspriteop_USER_AREA,
+        source_area,
+        entry->path
+    );
+    if (error != NULL || source_area->sprite_count < 1 ||
+        source_area->first < (int) sizeof(*source_area) ||
+        source_area->used > source_area->size ||
+        source_area->used < source_area->first + (int) sizeof(*source_sprite) ||
+        (size_t) source_area->first + sizeof(*source_sprite) > area_size) {
+        free(source_area);
+        return NULL;
+    }
+    source_sprite = (osspriteop_header *)
+        ((byte *) source_area + source_area->first);
+    error = xosspriteop_read_sprite_info(
+        osspriteop_PTR,
+        source_area,
+        (osspriteop_id) source_sprite,
+        &source_width,
+        &source_height,
+        &has_mask,
+        NULL
+    );
+    if (error != NULL || source_width <= 0 || source_height <= 0 ||
+        source_width > MAXIMUM_IMAGE_DIMENSION ||
+        source_height > MAXIMUM_IMAGE_DIMENSION) {
+        free(source_area);
+        return NULL;
+    }
+
+    output_width = source_width;
+    output_height = source_height;
+    if (output_width > maximum_width || output_height > maximum_height) {
+        if ((long long) output_width * maximum_height >
+            (long long) output_height * maximum_width) {
+            output_height = (int) ((long long) output_height *
+                maximum_width / output_width);
+            output_width = maximum_width;
+        } else {
+            output_width = (int) ((long long) output_width *
+                maximum_height / output_height);
+            output_height = maximum_height;
+        }
+        if (output_width < 1) {
+            output_width = 1;
+        }
+        if (output_height < 1) {
+            output_height = 1;
+        }
+    }
+
+    output_area = imgorg_browser_window_create_sprite(
+        output_width,
+        output_height
+    );
+    if (output_area == NULL) {
+        free(source_area);
+        return NULL;
+    }
+    output_sprite = (osspriteop_header *)
+        ((byte *) output_area + output_area->first);
+    error = xcolourtrans_generate_table_for_sprite(
+        source_area,
+        (osspriteop_id) source_sprite,
+        output_sprite->mode,
+        NULL,
+        NULL,
+        0,
+        NULL,
+        NULL,
+        &translation_size
+    );
+    if (error != NULL) {
+        goto cleanup;
+    }
+    if (translation_size < 0 || translation_size > 1024 * 1024) {
+        goto cleanup;
+    }
+    if (translation_size > 0) {
+        translation = malloc((size_t) translation_size);
+        if (translation == NULL) {
+            goto cleanup;
+        }
+        error = xcolourtrans_generate_table_for_sprite(
+            source_area,
+            (osspriteop_id) source_sprite,
+            output_sprite->mode,
+            NULL,
+            translation,
+            0,
+            NULL,
+            NULL,
+            &translation_size
+        );
+        if (error != NULL) {
+            goto cleanup;
+        }
+    }
+
+    error = xosspriteop_read_save_area_size(
+        osspriteop_PTR,
+        output_area,
+        (osspriteop_id) output_sprite,
+        &save_area_size
+    );
+    if (error != NULL || save_area_size <= 0) {
+        goto cleanup;
+    }
+    save_area = malloc((size_t) save_area_size);
+    if (save_area == NULL) {
+        goto cleanup;
+    }
+    error = xosspriteop_switch_output_to_sprite(
+        osspriteop_PTR,
+        output_area,
+        (osspriteop_id) output_sprite,
+        save_area,
+        &context0,
+        &context1,
+        &context2,
+        &context3
+    );
+    if (error != NULL) {
+        goto cleanup;
+    }
+    output_switched = true;
+    factors.xmul = output_width;
+    factors.ymul = output_height;
+    factors.xdiv = source_width;
+    factors.ydiv = source_height;
+    error = xosspriteop_put_sprite_scaled(
+        osspriteop_PTR,
+        source_area,
+        (osspriteop_id) source_sprite,
+        0,
+        0,
+        os_ACTION_OVERWRITE | (has_mask ? osspriteop_USE_MASK : 0),
+        &factors,
+        translation
+    );
+    {
+        os_error *unswitch_error = xosspriteop_unswitch_output(
+            context0,
+            context1,
+            context2,
+            context3
+        );
+        output_switched = false;
+        if (error == NULL) {
+            error = unswitch_error;
+        }
+    }
+    if (error != NULL) {
+        goto cleanup;
+    }
+
+    free(save_area);
+    free(translation);
+    free(source_area);
+    *width_out = output_width;
+    *height_out = output_height;
+    return output_area;
+
+cleanup:
+    if (output_switched) {
+        (void) xosspriteop_unswitch_output(
+            context0,
+            context1,
+            context2,
+            context3
+        );
+    }
+    free(save_area);
+    free(translation);
+    free(source_area);
+    free(output_area);
+    return NULL;
+}
+
 static void imgorg_browser_window_clear_thumbnails(
     imgorg_browser_window *browser
 )
@@ -1108,7 +1330,8 @@ static size_t imgorg_browser_window_next_thumbnail_index(
         }
         entry = imgorg_image_list_get(&browser->images, index);
         if (entry->format == IMGORG_IMAGE_FORMAT_PNG ||
-            entry->format == IMGORG_IMAGE_FORMAT_JPEG) {
+            entry->format == IMGORG_IMAGE_FORMAT_JPEG ||
+            entry->format == IMGORG_IMAGE_FORMAT_SPRITE) {
             return index;
         }
         browser->thumbnails[index].attempted = true;
@@ -1123,7 +1346,8 @@ static size_t imgorg_browser_window_next_thumbnail_index(
         }
         entry = imgorg_image_list_get(&browser->images, index);
         if (entry->format == IMGORG_IMAGE_FORMAT_PNG ||
-            entry->format == IMGORG_IMAGE_FORMAT_JPEG) {
+            entry->format == IMGORG_IMAGE_FORMAT_JPEG ||
+            entry->format == IMGORG_IMAGE_FORMAT_SPRITE) {
             return index;
         }
         browser->thumbnails[index].attempted = true;
@@ -1753,6 +1977,16 @@ os_error *imgorg_browser_window_scan_step(imgorg_browser_window *browser)
                     THUMBNAIL_MAXIMUM_WIDTH,
                     THUMBNAIL_MAXIMUM_HEIGHT,
                     true,
+                    &thumbnail->width,
+                    &thumbnail->height
+                );
+        } else if (thumbnail->sprite_area == NULL &&
+            entry->format == IMGORG_IMAGE_FORMAT_SPRITE) {
+            thumbnail->sprite_area =
+                imgorg_browser_window_decode_sprite_file(
+                    entry,
+                    THUMBNAIL_MAXIMUM_WIDTH,
+                    THUMBNAIL_MAXIMUM_HEIGHT,
                     &thumbnail->width,
                     &thumbnail->height
                 );

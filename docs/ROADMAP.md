@@ -15,7 +15,7 @@
 
 ## 0.2 — thumbnails
 
-- [ ] Sprite thumbnail loading
+- [x] Sprite thumbnail loading
 - [x] JPEG thumbnail decoding
 - [x] PNG thumbnail decoding
 - [x] progressive thumbnail queue
