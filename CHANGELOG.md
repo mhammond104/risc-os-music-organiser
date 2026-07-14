@@ -33,3 +33,9 @@
   full-resolution image decoding.
 - Native Sprite-file thumbnails rendered into the bounded progressive thumbnail
   and persistent-cache pipeline.
+- A separate image-viewer Wimp window with independent redraw, close, zoom, pan
+  and file-drop routing, leaving the thumbnail browser active alongside it.
+- Multiple simultaneous viewer windows with duplicate focusing and targeted
+  replacement. Viewers are created on demand, with image-header preflight and
+  tracked image and thumbnail memory preventing the 128 MB Wimp slot from being
+  exceeded.

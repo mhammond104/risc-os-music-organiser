@@ -107,10 +107,14 @@ static os_error *imgorg_application_handle_data_load(
     fileswitch_object_type object_type;
     bits file_type;
     os_error *error;
+    bool loaded_directory = false;
 
     if (!((transfer->w == wimp_ICON_BAR &&
            transfer->i == application->iconbar_icon) ||
-          transfer->w == application->browser.handle)) {
+          imgorg_browser_window_owns_window(
+              &application->browser,
+              transfer->w
+          ))) {
         return NULL;
     }
 
@@ -124,15 +128,17 @@ static os_error *imgorg_application_handle_data_load(
         &file_type
     );
     if (error == NULL && object_type == fileswitch_IS_DIR) {
+        loaded_directory = true;
         error = imgorg_browser_window_load_directory(
             &application->browser,
             transfer->file_name
         );
     } else if (error == NULL) {
-        error = imgorg_browser_window_load_image(
+        error = imgorg_browser_window_load_image_into(
             &application->browser,
             transfer->file_name,
-            imgorg_image_format_from_filetype(file_type)
+            imgorg_image_format_from_filetype(file_type),
+            transfer->w
         );
     }
     if (error != NULL) {
@@ -155,7 +161,8 @@ static os_error *imgorg_application_handle_data_load(
         return error;
     }
 
-    return imgorg_browser_window_open(&application->browser);
+    return loaded_directory ?
+        imgorg_browser_window_open(&application->browser) : NULL;
 }
 
 os_error *imgorg_application_initialise(imgorg_application *application)
@@ -199,8 +206,7 @@ os_error *imgorg_application_run(imgorg_application *application)
     }
 
     while (!application->quit && error == NULL) {
-        if (application->browser.dragging ||
-            imgorg_browser_window_has_background_work(
+        if (imgorg_browser_window_has_background_work(
                 &application->browser
             )) {
             os_t now;
@@ -276,6 +282,14 @@ os_error *imgorg_application_run(imgorg_application *application)
                 application,
                 &block.pointer
             );
+            if (error != NULL) {
+                (void) wimp_report_error(
+                    error,
+                    wimp_ERROR_BOX_OK_ICON,
+                    "Image Organiser"
+                );
+                error = NULL;
+            }
             break;
 
         case wimp_USER_DRAG_BOX:

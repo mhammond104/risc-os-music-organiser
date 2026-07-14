@@ -105,13 +105,17 @@ and emulator/tooling in use.
 
 Launch Image Organiser, then drag a directory, PNG or JPEG file onto either its
 iconbar icon or its browser window. A directory becomes the browser's current
-source. Double-clicking a PNG or JPEG thumbnail opens it in the same image
-viewer. An image is loaded into memory and scaled to fit the window. Dropping
-another source replaces the current one. The window title shows the image name
-and the current zoom percentage, or `Fit` in fit-to-window mode. Closing an
-image opened from a thumbnail returns to the same populated directory browser.
+source. Double-clicking PNG or JPEG thumbnails opens independent image viewers,
+leaving the populated browser open alongside them. Opening an image that is
+already displayed brings its viewer to the front. Dropping an image onto an
+existing viewer replaces only that viewer; dropping onto the iconbar or browser
+opens another. Each viewer has independent fit, zoom and pan state. Closing a
+viewer does not disturb the directory browser or other viewers.
 Single-clicking a thumbnail highlights its cell, and a loading window remains
-visible while a full-resolution image is decoded.
+visible while a full-resolution image is decoded. Viewer windows are created on
+demand rather than limited to a fixed count. Before decoding another image, the
+application checks its estimated peak memory requirement against the 128 MB Wimp
+slot and asks the user to close viewers if the image would not fit safely.
 Directory browsers show real PNG, JPEG and Sprite thumbnails.
 
 With an image open:

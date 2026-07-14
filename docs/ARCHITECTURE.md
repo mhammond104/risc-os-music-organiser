@@ -17,19 +17,29 @@ between polls.
 
 ### Browser window
 
-`browser_window.c` owns the thumbnail-window state, redraw processing, scrolling
-and pointer interaction. It decodes dropped or double-clicked PNG and JPEG
-images through libpng and libjpeg-turbo, retains the result as a 32-bpp RISC OS
-sprite and plots it fit-to-window through core SpriteOp calls; otherwise it
-draws a placeholder cell. Viewer state stores a
+`browser_window.c` owns a thumbnail-browser window and dynamically allocated
+image-viewer Wimp windows, their redraw processing, scrolling and pointer interaction. It decodes
+dropped or double-clicked PNG and JPEG images through libpng and libjpeg-turbo,
+retains the result as a 32-bpp RISC OS sprite and plots it fit-to-window through
+core SpriteOp calls. Viewer state stores a
 bounded zoom percentage and screen-coordinate pan offset, with Wimp scroll and
 drag events driving those controls. While a pan drag is active, timed idle polls
 sample the pointer and use immediate, non-clearing Wimp update loops so the image
 follows the mouse continuously without flashing the window background first.
-Opening a thumbnail retains its directory list, decoded thumbnails and scanner
-state behind the viewer; closing that viewer restores the browser in place. A
+Opening a thumbnail leaves its directory list, decoded thumbnails and scanner
+active in the separate browser window; closing the viewer leaves that browser
+untouched. A
 small Wimp loading window is explicitly redrawn before synchronous full-image
 decoding, so lengthy decodes provide feedback even while polling is paused.
+Each viewer owns its image, title, fit, zoom, pan and drag state. Duplicate open
+requests focus the existing viewer, while drops onto a viewer replace that
+viewer's image. Viewer windows have no fixed count limit. Before opening one,
+the application
+reads the image header and estimates both its retained sprite size and the peak
+temporary decoder storage. Existing viewer sprites and thumbnail sprite areas
+are tracked, with a reserve for the application, libraries and Wimp structures;
+an image whose estimated peak would exceed the 128 MB Wimp slot is refused with
+a recoverable error box. Closed viewer structures and Wimp windows are reused.
 
 ### Collection model
 

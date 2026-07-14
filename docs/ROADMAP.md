@@ -25,10 +25,11 @@
 
 ## 0.3 — viewer
 
-- [ ] separate image windows
+- [x] multiple independent image-viewer windows
+- [x] dynamic viewer allocation within the 128 MB Wimp slot
 - [x] open PNG and JPEG thumbnails in the viewer
-- [ ] fit-to-window mode (single-image preview complete)
-- [ ] zoom and pan (single-image preview complete)
+- [x] fit-to-window mode
+- [x] zoom and pan
 - [ ] remove viewer scroll bars; panning provides navigation within zoomed images
 - [ ] previous/next navigation
 - [ ] rotate for display

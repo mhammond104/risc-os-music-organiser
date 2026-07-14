@@ -15,6 +15,27 @@ typedef struct imgorg_thumbnail {
     bool attempted;
 } imgorg_thumbnail;
 
+typedef struct imgorg_viewer_window {
+    struct imgorg_viewer_window *next;
+    wimp_w handle;
+    bool created;
+    char title[160];
+    char image_name[112];
+    char image_path[IMGORG_PATH_CAPACITY];
+    osspriteop_area *sprite_area;
+    osspriteop_header *sprite;
+    int image_width;
+    int image_height;
+    bool fit_to_window;
+    int zoom_percent;
+    int pan_x;
+    int pan_y;
+    bool dragging;
+    os_coord drag_start;
+    int drag_pan_x;
+    int drag_pan_y;
+} imgorg_viewer_window;
+
 typedef struct imgorg_browser_window {
     wimp_w handle;
     wimp_w loading_handle;
@@ -22,7 +43,6 @@ typedef struct imgorg_browser_window {
     bool loading_created;
     char title[160];
     char loading_text[32];
-    char image_name[112];
     char directory_name[112];
     char directory_path[IMGORG_PATH_CAPACITY];
     imgorg_image_list images;
@@ -33,23 +53,16 @@ typedef struct imgorg_browser_window {
     size_t thumbnail_cursor;
     size_t thumbnail_priority_start;
     size_t thumbnail_priority_end;
-    osspriteop_area *image_sprite_area;
-    osspriteop_header *image_sprite;
-    int image_width;
-    int image_height;
-    bool fit_to_window;
-    int zoom_percent;
-    int pan_x;
-    int pan_y;
-    bool dragging;
-    bool return_to_directory;
-    os_coord drag_start;
-    int drag_pan_x;
-    int drag_pan_y;
+    imgorg_viewer_window *viewers;
+    size_t viewer_image_bytes;
 } imgorg_browser_window;
 
 os_error *imgorg_browser_window_create(imgorg_browser_window *browser);
 os_error *imgorg_browser_window_open(imgorg_browser_window *browser);
+bool imgorg_browser_window_owns_window(
+    const imgorg_browser_window *browser,
+    wimp_w window
+);
 os_error *imgorg_browser_window_handle_open_request(
     imgorg_browser_window *browser,
     const wimp_open *open,
@@ -72,6 +85,12 @@ os_error *imgorg_browser_window_load_image(
     imgorg_browser_window *browser,
     const char *file_name,
     imgorg_image_format format
+);
+os_error *imgorg_browser_window_load_image_into(
+    imgorg_browser_window *browser,
+    const char *file_name,
+    imgorg_image_format format,
+    wimp_w target
 );
 os_error *imgorg_browser_window_load_directory(
     imgorg_browser_window *browser,
