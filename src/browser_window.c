@@ -11,12 +11,14 @@
 
 #include "oslib/colourtrans.h"
 #include "oslib/os.h"
+#include "oslib/osfile.h"
 #include "oslib/wimpspriteop.h"
 #include "imgorg/thumbnail_cache.h"
 
 enum {
-    BROWSER_VISIBLE_WIDTH = 960,
-    BROWSER_VISIBLE_HEIGHT = 640
+    BROWSER_VISIBLE_WIDTH = 1760,
+    BROWSER_VISIBLE_HEIGHT = 1080,
+    BROWSER_WORKSPACE_WIDTH = 4096
 };
 
 enum {
@@ -34,20 +36,208 @@ enum {
 };
 
 enum {
-    THUMBNAIL_COLUMNS = 3,
-    THUMBNAIL_CELL_WIDTH = 280,
-    THUMBNAIL_CELL_HEIGHT = 240,
+    THUMBNAIL_DEFAULT_CELL_WIDTH = 280,
+    THUMBNAIL_MINIMUM_CELL_WIDTH = 184,
+    THUMBNAIL_MAXIMUM_CELL_WIDTH = 440,
     THUMBNAIL_GAP = 24,
     THUMBNAIL_MARGIN = 32,
     THUMBNAIL_IMAGE_INSET = 16,
-    THUMBNAIL_LABEL_HEIGHT = 48,
     THUMBNAIL_MAXIMUM_WIDTH = 160,
     THUMBNAIL_MAXIMUM_HEIGHT = 112,
+    THUMBNAIL_SLIDER_WIDTH = 176,
+    THUMBNAIL_SLIDER_KNOB_WIDTH = 24,
     LOADING_WINDOW_WIDTH = 360,
-    LOADING_WINDOW_HEIGHT = 120
+    LOADING_WINDOW_HEIGHT = 120,
+    WORKSPACE_LEFT_PANEL_WIDTH = 280,
+    WORKSPACE_RIGHT_PANEL_WIDTH = 320,
+    WORKSPACE_HEADER_HEIGHT = 72,
+    WORKSPACE_PANEL_PADDING = 24,
+    INSPECTOR_RATING_BUTTON_WIDTH = 32,
+    INSPECTOR_RATING_BUTTON_GAP = 6,
+    INSPECTOR_BUTTON_HEIGHT = 44,
+    VIEWER_TOOLBAR_HEIGHT = 72,
+    VIEWER_TOOLBAR_ICON_COUNT = 6,
+    ALBUM_DIALOG_WIDTH = 520,
+    ALBUM_DIALOG_HEIGHT = 180
+};
+
+static const char IMGORG_LIBRARY_DIRECTORY[] = "<Choices$Write>.Focal";
+static const char IMGORG_LIBRARY_FILE[] = "<Choices$Write>.Focal.Library";
+static char IMGORG_EMPTY_ICON_TEXT[] = "";
+static char IMGORG_BORDER_SLAB_OUT[] = "R1";
+static char IMGORG_BORDER_SLAB_IN[] = "R2";
+static char IMGORG_BORDER_RIDGE[] = "R3";
+static char IMGORG_BORDER_ACTION[] = "R5";
+static char IMGORG_VIEWER_BACK_LABEL[] = "<";
+static char IMGORG_VIEWER_FORWARD_LABEL[] = ">";
+static char IMGORG_VIEWER_ACTUAL_LABEL[] = "100%";
+static char IMGORG_VIEWER_FIT_LABEL[] = "Fit";
+static char IMGORG_VIEWER_FULLSCREEN_LABEL[] = "Full Screen";
+static char IMGORG_VIEWER_LEAVE_FULLSCREEN_LABEL[] = "Leave Full Screen";
+static char IMGORG_RATING_LABELS[5][2] = {"1", "2", "3", "4", "5"};
+static char IMGORG_FAVOURITE_ADD_LABEL[] = "Add";
+static char IMGORG_FAVOURITE_REMOVE_LABEL[] = "Remove";
+static char IMGORG_MENU_OPEN_LABEL[] = "Open";
+static char IMGORG_MENU_ADD_ALBUM_LABEL[] = "Add to Album...";
+static char IMGORG_MENU_CREATE_ALBUM_LABEL[] = "Create New...";
+static char IMGORG_MENU_REMOVE_LABEL[] = "Remove from library";
+static char IMGORG_MENU_RENAME_ALBUM_LABEL[] = "Rename";
+static char IMGORG_MENU_REMOVE_ALBUM_LABEL[] = "Remove Album";
+static char IMGORG_ALBUM_DIALOG_CANCEL_LABEL[] = "Cancel";
+static char IMGORG_ALBUM_DIALOG_OK_LABEL[] = "OK";
+static wimp_MENU(3) imgorg_thumbnail_menu;
+static wimp_MENU(2) imgorg_album_menu;
+static wimp_menu *imgorg_album_submenu;
+static bool imgorg_thumbnail_menu_initialised;
+static bool imgorg_album_menu_initialised;
+
+enum {
+    VIEWER_TOOLBAR_BACKGROUND = 0,
+    VIEWER_TOOLBAR_BACK,
+    VIEWER_TOOLBAR_FORWARD,
+    VIEWER_TOOLBAR_ACTUAL_SIZE,
+    VIEWER_TOOLBAR_FIT,
+    VIEWER_TOOLBAR_FULLSCREEN
+};
+
+enum {
+    ALBUM_DIALOG_LABEL = 0,
+    ALBUM_DIALOG_NAME,
+    ALBUM_DIALOG_CANCEL,
+    ALBUM_DIALOG_OK,
+    ALBUM_DIALOG_ICON_COUNT
 };
 
 static os_error browser_error;
+
+static void imgorg_browser_window_set_thumbnail_priority(
+    imgorg_browser_window *browser,
+    int yscroll,
+    int visible_height
+);
+static os_error *imgorg_browser_window_plot_workspace_chrome(
+    const imgorg_browser_window *browser,
+    const wimp_draw *draw
+);
+static os_error *imgorg_browser_window_accept_album_dialog(
+    imgorg_browser_window *browser
+);
+
+static void imgorg_browser_window_initialise_menu(
+    wimp_menu *menu,
+    const char *title,
+    int width
+)
+{
+    memset(menu, 0, offsetof(wimp_menu, entries));
+    snprintf(menu->title_data.text, sizeof(menu->title_data.text), "%s", title);
+    menu->title_fg = wimp_COLOUR_BLACK;
+    menu->title_bg = wimp_COLOUR_LIGHT_GREY;
+    menu->work_fg = wimp_COLOUR_BLACK;
+    menu->work_bg = wimp_COLOUR_WHITE;
+    menu->width = width;
+    menu->height = 44;
+    menu->gap = 0;
+}
+
+static void imgorg_browser_window_set_menu_entry(
+    wimp_menu_entry *entry,
+    char *label,
+    wimp_menu_flags flags
+)
+{
+    entry->menu_flags = flags;
+    entry->icon_flags =
+        wimp_ICON_TEXT | wimp_ICON_FILLED | wimp_ICON_INDIRECTED |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (wimp_COLOUR_WHITE << wimp_ICON_BG_COLOUR_SHIFT);
+    entry->data.indirected_text.text = label;
+    entry->data.indirected_text.validation = (char *) -1;
+    entry->data.indirected_text.size = strlen(label) + 1;
+}
+
+static wimp_menu *imgorg_browser_window_build_album_submenu(
+    const imgorg_browser_window *browser
+)
+{
+    size_t count = browser->albums.count + 1;
+    size_t index;
+
+    free(imgorg_album_submenu);
+    imgorg_album_submenu = calloc(1, wimp_SIZEOF_MENU(count));
+    if (imgorg_album_submenu == NULL) {
+        return NULL;
+    }
+    imgorg_browser_window_initialise_menu(
+        imgorg_album_submenu,
+        "Albums",
+        320
+    );
+    for (index = 0; index < browser->albums.count; ++index) {
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_album_submenu->entries[index],
+            browser->albums.items[index].name,
+            0
+        );
+    }
+    imgorg_browser_window_set_menu_entry(
+        &imgorg_album_submenu->entries[count - 1],
+        IMGORG_MENU_CREATE_ALBUM_LABEL,
+        wimp_MENU_LAST |
+            (browser->albums.count > 0 ? wimp_MENU_SEPARATE : 0)
+    );
+    return imgorg_album_submenu;
+}
+
+static wimp_menu *imgorg_browser_window_thumbnail_menu(
+    const imgorg_browser_window *browser
+)
+{
+    wimp_icon_flags item_flags =
+        wimp_ICON_TEXT |
+        wimp_ICON_FILLED |
+        wimp_ICON_INDIRECTED |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (wimp_COLOUR_WHITE << wimp_ICON_BG_COLOUR_SHIFT);
+
+    if (!imgorg_thumbnail_menu_initialised) {
+        (void) item_flags;
+        memset(&imgorg_thumbnail_menu, 0, sizeof(imgorg_thumbnail_menu));
+        imgorg_browser_window_initialise_menu(
+            (wimp_menu *) &imgorg_thumbnail_menu,
+            "Photograph",
+            320
+        );
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_thumbnail_menu.entries[0], IMGORG_MENU_OPEN_LABEL, 0);
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_thumbnail_menu.entries[1],
+            IMGORG_MENU_ADD_ALBUM_LABEL, 0);
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_thumbnail_menu.entries[2], IMGORG_MENU_REMOVE_LABEL,
+            wimp_MENU_LAST | wimp_MENU_SEPARATE);
+        imgorg_thumbnail_menu_initialised = true;
+    }
+    imgorg_thumbnail_menu.entries[1].sub_menu =
+        imgorg_browser_window_build_album_submenu(browser);
+    return (wimp_menu *) &imgorg_thumbnail_menu;
+}
+
+static wimp_menu *imgorg_browser_window_album_menu(void)
+{
+    if (!imgorg_album_menu_initialised) {
+        memset(&imgorg_album_menu, 0, sizeof(imgorg_album_menu));
+        imgorg_browser_window_initialise_menu(
+            (wimp_menu *) &imgorg_album_menu, "Album", 260);
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_album_menu.entries[0], IMGORG_MENU_RENAME_ALBUM_LABEL, 0);
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_album_menu.entries[1], IMGORG_MENU_REMOVE_ALBUM_LABEL,
+            wimp_MENU_LAST | wimp_MENU_SEPARATE);
+        imgorg_album_menu_initialised = true;
+    }
+    return (wimp_menu *) &imgorg_album_menu;
+}
 
 typedef struct imgorg_jpeg_error_state {
     struct jpeg_error_mgr manager;
@@ -192,33 +382,335 @@ static bool imgorg_browser_window_image_fits_slot(
 static os_error *imgorg_browser_window_update_drag(
     const imgorg_viewer_window *viewer
 );
+static os_error *imgorg_browser_window_set_toolbar_visible(
+    imgorg_viewer_window *viewer,
+    bool visible
+);
+static void imgorg_browser_window_inspector_rating_box(
+    const os_box *right,
+    int rating_baseline,
+    unsigned int rating,
+    os_box *box
+);
+static void imgorg_browser_window_inspector_favourite_box(
+    const os_box *right,
+    int favourite_baseline,
+    os_box *box
+);
+static bool imgorg_browser_window_point_in_box(
+    const os_coord *point,
+    const os_box *box
+);
+
+static bool imgorg_browser_window_entry_matches_filter(
+    const imgorg_browser_window *browser,
+    const imgorg_image_entry *entry
+)
+{
+    switch (browser->filter_kind) {
+    case IMGORG_LIBRARY_FILTER_FOLDER:
+        if (browser->filter_folder_index < browser->folders.count) {
+            const char *folder =
+                browser->folders.items[browser->filter_folder_index];
+            size_t length = strlen(folder);
+
+            return strncmp(entry->path, folder, length) == 0 &&
+                entry->path[length] == '.';
+        }
+        return false;
+
+    case IMGORG_LIBRARY_FILTER_RATING:
+        return entry->rating == browser->filter_rating;
+
+    case IMGORG_LIBRARY_FILTER_FAVOURITES:
+        return entry->favourite;
+
+    case IMGORG_LIBRARY_FILTER_ALBUM:
+        return browser->filter_album_index < browser->albums.count &&
+            imgorg_album_contains(
+                &browser->albums.items[browser->filter_album_index],
+                entry->path
+            );
+
+    case IMGORG_LIBRARY_FILTER_ALL:
+    default:
+        return true;
+    }
+}
+
+static size_t imgorg_browser_window_visible_image_count(
+    const imgorg_browser_window *browser
+)
+{
+    size_t count = 0;
+    size_t index;
+
+    for (index = 0; index < browser->images.count; ++index) {
+        if (imgorg_browser_window_entry_matches_filter(
+                browser,
+                &browser->images.items[index]
+            )) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+static size_t imgorg_browser_window_actual_image_index(
+    const imgorg_browser_window *browser,
+    size_t visible_index
+)
+{
+    size_t matched = 0;
+    size_t index;
+
+    for (index = 0; index < browser->images.count; ++index) {
+        if (!imgorg_browser_window_entry_matches_filter(
+                browser,
+                &browser->images.items[index]
+            )) {
+            continue;
+        }
+        if (matched == visible_index) {
+            return index;
+        }
+        ++matched;
+    }
+    return SIZE_MAX;
+}
+
+static void imgorg_browser_window_prune_empty_folders(
+    imgorg_browser_window *browser
+)
+{
+    size_t folder_index = 0;
+
+    while (folder_index < browser->folders.count) {
+        const char *folder = browser->folders.items[folder_index];
+        size_t folder_length = strlen(folder);
+        size_t image_index;
+        bool has_image = false;
+
+        for (image_index = 0;
+             image_index < browser->images.count;
+             ++image_index) {
+            const char *path = browser->images.items[image_index].path;
+
+            if (strncmp(path, folder, folder_length) == 0 &&
+                path[folder_length] == '.') {
+                has_image = true;
+                break;
+            }
+        }
+        if (has_image) {
+            ++folder_index;
+            continue;
+        }
+        if (browser->filter_kind == IMGORG_LIBRARY_FILTER_FOLDER) {
+            if (browser->filter_folder_index == folder_index) {
+                browser->filter_kind = IMGORG_LIBRARY_FILTER_ALL;
+                browser->filter_folder_index = 0;
+            } else if (browser->filter_folder_index > folder_index) {
+                --browser->filter_folder_index;
+            }
+        }
+        (void) imgorg_folder_list_remove_at(
+            &browser->folders,
+            folder_index
+        );
+        if (browser->folder_scan_index > folder_index) {
+            --browser->folder_scan_index;
+        }
+    }
+}
+
+static int imgorg_browser_window_thumbnail_cell_width(
+    const imgorg_browser_window *browser
+)
+{
+    return browser != NULL &&
+        browser->thumbnail_cell_width >= THUMBNAIL_MINIMUM_CELL_WIDTH ?
+            browser->thumbnail_cell_width : THUMBNAIL_DEFAULT_CELL_WIDTH;
+}
+
+static int imgorg_browser_window_thumbnail_cell_height(
+    const imgorg_browser_window *browser
+)
+{
+    return imgorg_browser_window_thumbnail_cell_width(browser) * 6 / 7;
+}
+
+static void imgorg_browser_window_thumbnail_slider_track(
+    const os_box *visible,
+    os_box *track
+)
+{
+    track->x1 = visible->x1 - WORKSPACE_RIGHT_PANEL_WIDTH - 24;
+    track->x0 = track->x1 - THUMBNAIL_SLIDER_WIDTH;
+    track->y0 = visible->y1 - 44;
+    track->y1 = visible->y1 - 28;
+}
+
+static void imgorg_browser_window_thumbnail_slider_knob(
+    const imgorg_browser_window *browser,
+    const os_box *visible,
+    os_box *knob
+)
+{
+    os_box track;
+    int range = THUMBNAIL_MAXIMUM_CELL_WIDTH -
+        THUMBNAIL_MINIMUM_CELL_WIDTH;
+    int position;
+
+    imgorg_browser_window_thumbnail_slider_track(visible, &track);
+    position = (imgorg_browser_window_thumbnail_cell_width(browser) -
+        THUMBNAIL_MINIMUM_CELL_WIDTH) * (track.x1 - track.x0) / range;
+    knob->x0 = track.x0 + position - THUMBNAIL_SLIDER_KNOB_WIDTH / 2;
+    knob->x1 = knob->x0 + THUMBNAIL_SLIDER_KNOB_WIDTH;
+    knob->y0 = visible->y1 - 54;
+    knob->y1 = visible->y1 - 18;
+}
+
+static size_t imgorg_browser_window_thumbnail_columns_for_width(
+    const imgorg_browser_window *browser,
+    int width
+)
+{
+    int cell_width = imgorg_browser_window_thumbnail_cell_width(browser);
+    int available = width - WORKSPACE_LEFT_PANEL_WIDTH -
+        WORKSPACE_RIGHT_PANEL_WIDTH - (2 * THUMBNAIL_MARGIN);
+    int columns = (available + THUMBNAIL_GAP) /
+        (cell_width + THUMBNAIL_GAP);
+
+    if (columns < 1) {
+        return 1;
+    }
+    return (size_t) columns;
+}
+
+static int imgorg_browser_window_thumbnail_grid_x0(
+    const imgorg_browser_window *browser,
+    int width,
+    size_t columns
+)
+{
+    int cell_width = imgorg_browser_window_thumbnail_cell_width(browser);
+    int content_width = width - WORKSPACE_LEFT_PANEL_WIDTH -
+        WORKSPACE_RIGHT_PANEL_WIDTH;
+    int grid_width = (int) columns * cell_width +
+        ((int) columns - 1) * THUMBNAIL_GAP;
+    int remaining = content_width - grid_width;
+
+    if (remaining < 2 * THUMBNAIL_MARGIN) {
+        remaining = 2 * THUMBNAIL_MARGIN;
+    }
+    return WORKSPACE_LEFT_PANEL_WIDTH + remaining / 2;
+}
+
+static size_t imgorg_browser_window_thumbnail_columns(
+    const imgorg_browser_window *browser
+)
+{
+    wimp_window_state state;
+
+    if (browser != NULL && browser->created) {
+        state.w = browser->handle;
+        if (xwimp_get_window_state(&state) == NULL) {
+            return imgorg_browser_window_thumbnail_columns_for_width(
+                browser,
+                state.visible.x1 - state.visible.x0
+            );
+        }
+    }
+    return imgorg_browser_window_thumbnail_columns_for_width(
+        browser,
+        BROWSER_VISIBLE_WIDTH
+    );
+}
+
+static int imgorg_browser_window_directory_extent_y0_for_width(
+    const imgorg_browser_window *browser,
+    int width,
+    int minimum_height
+)
+{
+    size_t columns = imgorg_browser_window_thumbnail_columns_for_width(
+        browser,
+        width
+    );
+    size_t visible_count =
+        imgorg_browser_window_visible_image_count(browser);
+    size_t rows = (visible_count + columns - 1) / columns;
+    int height = WORKSPACE_HEADER_HEIGHT + THUMBNAIL_MARGIN + (int) rows *
+        (imgorg_browser_window_thumbnail_cell_height(browser) +
+         THUMBNAIL_GAP);
+
+    if (height < minimum_height) {
+        height = minimum_height;
+    }
+    return -height;
+}
 
 static int imgorg_browser_window_directory_extent_y0(
     const imgorg_browser_window *browser
 )
 {
-    size_t rows = (browser->images.count + THUMBNAIL_COLUMNS - 1) /
-        THUMBNAIL_COLUMNS;
-    int height = THUMBNAIL_MARGIN + (int) rows *
-        (THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP);
+    wimp_window_state state;
 
-    if (height < BROWSER_VISIBLE_HEIGHT) {
-        height = BROWSER_VISIBLE_HEIGHT;
+    state.w = browser->handle;
+    if (browser->created && xwimp_get_window_state(&state) == NULL) {
+        return imgorg_browser_window_directory_extent_y0_for_width(
+            browser,
+            state.visible.x1 - state.visible.x0,
+            state.visible.y1 - state.visible.y0
+        );
     }
-    return -height;
+    return imgorg_browser_window_directory_extent_y0_for_width(
+        browser,
+        BROWSER_VISIBLE_WIDTH,
+        BROWSER_VISIBLE_HEIGHT
+    );
+}
+
+static os_error *imgorg_browser_window_update_directory_extent_for_width(
+    const imgorg_browser_window *browser,
+    int width,
+    int minimum_height
+)
+{
+    os_box extent;
+
+    extent.x0 = 0;
+    extent.y0 = imgorg_browser_window_directory_extent_y0_for_width(
+        browser,
+        width,
+        minimum_height
+    );
+    extent.x1 = width > BROWSER_WORKSPACE_WIDTH ?
+        width : BROWSER_WORKSPACE_WIDTH;
+    extent.y1 = 0;
+    return xwimp_set_extent(browser->handle, &extent);
 }
 
 static os_error *imgorg_browser_window_update_directory_extent(
     const imgorg_browser_window *browser
 )
 {
-    os_box extent;
+    wimp_window_state state;
 
-    extent.x0 = 0;
-    extent.y0 = imgorg_browser_window_directory_extent_y0(browser);
-    extent.x1 = BROWSER_VISIBLE_WIDTH;
-    extent.y1 = 0;
-    return xwimp_set_extent(browser->handle, &extent);
+    state.w = browser->handle;
+    if (browser->created && xwimp_get_window_state(&state) == NULL) {
+        return imgorg_browser_window_update_directory_extent_for_width(
+            browser,
+            state.visible.x1 - state.visible.x0,
+            state.visible.y1 - state.visible.y0
+        );
+    }
+    return imgorg_browser_window_update_directory_extent_for_width(
+        browser,
+        BROWSER_VISIBLE_WIDTH,
+        BROWSER_VISIBLE_HEIGHT
+    );
 }
 
 static os_error *imgorg_browser_window_error(const char *message)
@@ -262,6 +754,35 @@ static void imgorg_browser_window_read_eigen_factors(
     );
 }
 
+static void imgorg_browser_window_read_desktop_size(
+    int *width,
+    int *height
+)
+{
+    int x_limit = 0;
+    int y_limit = 0;
+    int x_eigen;
+    int y_eigen;
+
+    imgorg_browser_window_read_eigen_factors(&x_eigen, &y_eigen);
+    (void) xos_read_mode_variable(
+        os_CURRENT_MODE,
+        os_MODEVAR_XWIND_LIMIT,
+        &x_limit,
+        NULL
+    );
+    (void) xos_read_mode_variable(
+        os_CURRENT_MODE,
+        os_MODEVAR_YWIND_LIMIT,
+        &y_limit,
+        NULL
+    );
+    *width = x_limit > 0 ?
+        (x_limit + 1) << x_eigen : BROWSER_VISIBLE_WIDTH + 256;
+    *height = y_limit > 0 ?
+        (y_limit + 1) << y_eigen : BROWSER_VISIBLE_HEIGHT + 256;
+}
+
 static int imgorg_browser_window_fit_zoom(
     const imgorg_viewer_window *viewer,
     const os_box *visible
@@ -282,7 +803,8 @@ static int imgorg_browser_window_fit_zoom(
     available_width =
         (visible->x1 - visible->x0 - (2 * IMAGE_BORDER)) >> x_eigen;
     available_height =
-        (visible->y1 - visible->y0 - (2 * IMAGE_BORDER)) >> y_eigen;
+        (visible->y1 - visible->y0 - (2 * IMAGE_BORDER) -
+         (viewer->toolbar_visible ? VIEWER_TOOLBAR_HEIGHT : 0)) >> y_eigen;
 
     if (available_width <= 0 || available_height <= 0) {
         return MINIMUM_ZOOM_PERCENT;
@@ -299,7 +821,193 @@ static os_error *imgorg_browser_window_redraw_browser(
     const imgorg_browser_window *browser
 )
 {
-    return xwimp_force_redraw(browser->handle, 0, -2048, 2048, 0);
+    return xwimp_force_redraw(
+        browser->handle,
+        0,
+        -32768,
+        BROWSER_WORKSPACE_WIDTH,
+        0
+    );
+}
+
+static os_error *imgorg_browser_window_update_chrome_region(
+    const imgorg_browser_window *browser,
+    const os_box *box
+)
+{
+    wimp_draw update;
+    osbool more;
+    os_error *error;
+
+    memset(&update, 0, sizeof(update));
+    update.w = browser->handle;
+    update.box = *box;
+    error = xwimp_update_window(&update, &more);
+    while (error == NULL && more) {
+        error = imgorg_browser_window_plot_workspace_chrome(
+            browser,
+            &update
+        );
+        if (error == NULL) {
+            error = xwimp_get_rectangle(&update, &more);
+        }
+    }
+    return error;
+}
+
+static os_error *imgorg_browser_window_update_fixed_chrome(
+    const imgorg_browser_window *browser
+)
+{
+    wimp_window_state state;
+    os_box region;
+    os_error *error;
+    int width;
+    int height;
+
+    state.w = browser->handle;
+    error = xwimp_get_window_state(&state);
+    if (error != NULL) {
+        return error;
+    }
+    width = state.visible.x1 - state.visible.x0;
+    height = state.visible.y1 - state.visible.y0;
+
+    region.x0 = state.xscroll;
+    region.y0 = state.yscroll - height;
+    region.x1 = state.xscroll + WORKSPACE_LEFT_PANEL_WIDTH;
+    region.y1 = state.yscroll;
+    error = imgorg_browser_window_update_chrome_region(browser, &region);
+    if (error != NULL) {
+        return error;
+    }
+
+    region.x0 = state.xscroll + width - WORKSPACE_RIGHT_PANEL_WIDTH;
+    region.x1 = state.xscroll + width;
+    error = imgorg_browser_window_update_chrome_region(browser, &region);
+    if (error != NULL) {
+        return error;
+    }
+
+    region.x0 = state.xscroll + WORKSPACE_LEFT_PANEL_WIDTH;
+    region.y0 = state.yscroll - WORKSPACE_HEADER_HEIGHT;
+    region.x1 = state.xscroll + width - WORKSPACE_RIGHT_PANEL_WIDTH;
+    region.y1 = state.yscroll;
+    return imgorg_browser_window_update_chrome_region(browser, &region);
+}
+
+static os_error *imgorg_browser_window_redraw_thumbnail_canvas(
+    const imgorg_browser_window *browser
+)
+{
+    wimp_window_state state;
+    os_error *error;
+    int width;
+    int height;
+
+    state.w = browser->handle;
+    error = xwimp_get_window_state(&state);
+    if (error != NULL) {
+        return error;
+    }
+    width = state.visible.x1 - state.visible.x0;
+    height = state.visible.y1 - state.visible.y0;
+    return xwimp_force_redraw(
+        browser->handle,
+        state.xscroll + WORKSPACE_LEFT_PANEL_WIDTH,
+        state.yscroll - height,
+        state.xscroll + width - WORKSPACE_RIGHT_PANEL_WIDTH,
+        state.yscroll - WORKSPACE_HEADER_HEIGHT
+    );
+}
+
+static os_error *imgorg_browser_window_set_thumbnail_cell_width(
+    imgorg_browser_window *browser,
+    int width
+)
+{
+    wimp_window_state state;
+    os_error *error;
+    int minimum_scroll;
+    int visible_height;
+
+    if (width < THUMBNAIL_MINIMUM_CELL_WIDTH) {
+        width = THUMBNAIL_MINIMUM_CELL_WIDTH;
+    } else if (width > THUMBNAIL_MAXIMUM_CELL_WIDTH) {
+        width = THUMBNAIL_MAXIMUM_CELL_WIDTH;
+    }
+    width = (width + 4) & ~7;
+    if (width == browser->thumbnail_cell_width) {
+        return NULL;
+    }
+    browser->thumbnail_cell_width = width;
+
+    state.w = browser->handle;
+    error = xwimp_get_window_state(&state);
+    if (error != NULL) {
+        return error;
+    }
+    visible_height = state.visible.y1 - state.visible.y0;
+    error = imgorg_browser_window_update_directory_extent_for_width(
+        browser,
+        state.visible.x1 - state.visible.x0,
+        visible_height
+    );
+    if (error != NULL) {
+        return error;
+    }
+    minimum_scroll =
+        imgorg_browser_window_directory_extent_y0_for_width(
+            browser,
+            state.visible.x1 - state.visible.x0,
+            visible_height
+        ) + visible_height;
+    if (minimum_scroll > 0) {
+        minimum_scroll = 0;
+    }
+    if (state.yscroll < minimum_scroll) {
+        state.yscroll = minimum_scroll;
+    }
+    state.next = wimp_TOP;
+    error = xwimp_open_window((wimp_open *) &state);
+    if (error != NULL) {
+        return error;
+    }
+    imgorg_browser_window_set_thumbnail_priority(
+        browser,
+        state.yscroll,
+        visible_height
+    );
+    error = imgorg_browser_window_redraw_thumbnail_canvas(browser);
+    return error == NULL ?
+        imgorg_browser_window_update_fixed_chrome(browser) : error;
+}
+
+static os_error *imgorg_browser_window_set_thumbnail_width_from_pointer(
+    imgorg_browser_window *browser,
+    int pointer_x
+)
+{
+    wimp_window_state state;
+    os_box track;
+    int width;
+
+    state.w = browser->handle;
+    if (xwimp_get_window_state(&state) != NULL) {
+        return NULL;
+    }
+    imgorg_browser_window_thumbnail_slider_track(&state.visible, &track);
+    if (pointer_x < track.x0) {
+        pointer_x = track.x0;
+    } else if (pointer_x > track.x1) {
+        pointer_x = track.x1;
+    }
+    width = THUMBNAIL_MINIMUM_CELL_WIDTH +
+        (pointer_x - track.x0) *
+        (THUMBNAIL_MAXIMUM_CELL_WIDTH -
+         THUMBNAIL_MINIMUM_CELL_WIDTH) /
+        (track.x1 - track.x0);
+    return imgorg_browser_window_set_thumbnail_cell_width(browser, width);
 }
 
 static os_error *imgorg_browser_window_redraw_viewer(
@@ -309,8 +1017,8 @@ static os_error *imgorg_browser_window_redraw_viewer(
     return xwimp_force_redraw(
         viewer->handle,
         0,
-        -2048,
-        2048,
+        -32768,
+        BROWSER_WORKSPACE_WIDTH,
         0
     );
 }
@@ -319,28 +1027,23 @@ static os_error *imgorg_browser_window_update_title(
     imgorg_browser_window *browser
 )
 {
-    if (browser->directory_name[0] != '\0') {
-        if (browser->scanner.active) {
-            snprintf(
-                browser->title,
-                sizeof(browser->title),
-                "%s - %lu image%s - Scanning",
-                browser->directory_name,
-                (unsigned long) browser->images.count,
-                browser->images.count == 1 ? "" : "s"
-            );
-        } else {
-            snprintf(
-                browser->title,
-                sizeof(browser->title),
-                "%s - %lu image%s",
-                browser->directory_name,
-                (unsigned long) browser->images.count,
-                browser->images.count == 1 ? "" : "s"
-            );
-        }
+    if (browser->scanner.active) {
+        snprintf(
+            browser->title,
+            sizeof(browser->title),
+            "Focal - %lu image%s - Adding %.48s",
+            (unsigned long) browser->images.count,
+            browser->images.count == 1 ? "" : "s",
+            browser->directory_name
+        );
     } else {
-        snprintf(browser->title, sizeof(browser->title), "Image Organiser");
+        snprintf(
+            browser->title,
+            sizeof(browser->title),
+            "Focal - %lu image%s",
+            (unsigned long) browser->images.count,
+            browser->images.count == 1 ? "" : "s"
+        );
     }
 
     if (browser->created) {
@@ -398,6 +1101,62 @@ static void imgorg_browser_window_copy_leafname(
     }
 
     snprintf(destination, destination_size, "%s", leaf);
+}
+
+static os_error *imgorg_browser_window_save_library(
+    imgorg_browser_window *browser
+)
+{
+    os_error *error;
+
+    error = xosfile_create_dir(IMGORG_LIBRARY_DIRECTORY, 0);
+    if (error != NULL) {
+        return error;
+    }
+    if (!imgorg_library_catalog_save(
+            IMGORG_LIBRARY_FILE,
+            &browser->folders,
+            &browser->images,
+            &browser->albums
+        )) {
+        return imgorg_browser_window_error(
+            "The Focal library catalogue could not be saved"
+        );
+    }
+    browser->library_dirty = false;
+    (void) xosfile_set_type(IMGORG_LIBRARY_FILE, 0xFFD);
+    return NULL;
+}
+
+static os_error *imgorg_browser_window_start_next_folder_scan(
+    imgorg_browser_window *browser
+)
+{
+    while (!browser->scanner.active &&
+           browser->folder_scan_index < browser->folders.count) {
+        const char *path =
+            browser->folders.items[browser->folder_scan_index++];
+        int path_length = snprintf(
+            browser->directory_path,
+            sizeof(browser->directory_path),
+            "%s",
+            path
+        );
+
+        if (path_length < 0 ||
+            (size_t) path_length >= sizeof(browser->directory_path)) {
+            continue;
+        }
+        if (!imgorg_directory_scanner_start(&browser->scanner, path)) {
+            continue;
+        }
+        imgorg_browser_window_copy_leafname(
+            browser->directory_name,
+            sizeof(browser->directory_name),
+            path
+        );
+    }
+    return imgorg_browser_window_update_title(browser);
 }
 
 static os_error *imgorg_browser_window_apply_zoom(
@@ -540,7 +1299,7 @@ static osspriteop_area *imgorg_browser_window_decode_png(
 
     sprite = (osspriteop_header *) ((byte *) area + area->first);
     sprite->size = sizeof(*sprite) + (int) output_pixel_bytes;
-    memcpy(sprite->name, "imgorg", 7);
+    memcpy(sprite->name, "focal", 6);
     sprite->width = output_width - 1;
     sprite->height = output_height - 1;
     sprite->left_bit = 0;
@@ -677,7 +1436,7 @@ static osspriteop_area *imgorg_browser_window_create_sprite(
 
     sprite = (osspriteop_header *) ((byte *) area + area->first);
     sprite->size = sizeof(*sprite) + (int) pixel_bytes;
-    memcpy(sprite->name, "imgorg", 7);
+    memcpy(sprite->name, "focal", 6);
     sprite->width = width - 1;
     sprite->height = height - 1;
     sprite->left_bit = 0;
@@ -1359,7 +2118,8 @@ static void imgorg_browser_window_clear_thumbnails(
     browser->thumbnail_capacity = 0;
     browser->thumbnail_cursor = 0;
     browser->thumbnail_priority_start = 0;
-    browser->thumbnail_priority_end = THUMBNAIL_COLUMNS * 3;
+    browser->thumbnail_priority_end =
+        imgorg_browser_window_thumbnail_columns(browser) * 3;
 }
 
 static imgorg_viewer_window *imgorg_browser_window_find_viewer(
@@ -1414,8 +2174,12 @@ static imgorg_viewer_window *imgorg_browser_window_create_viewer(
 {
     imgorg_viewer_window *viewer;
     imgorg_viewer_window *cursor;
-    wimp_window definition;
+    wimp_WINDOW(VIEWER_TOOLBAR_ICON_COUNT) definition;
     size_t viewer_count = 0;
+    int desktop_width;
+    int desktop_height;
+    int viewer_width;
+    int viewer_height;
 
     *error_out = NULL;
     viewer = calloc(1, sizeof(*viewer));
@@ -1428,12 +2192,33 @@ static imgorg_viewer_window *imgorg_browser_window_create_viewer(
     for (cursor = browser->viewers; cursor != NULL; cursor = cursor->next) {
         ++viewer_count;
     }
+    viewer->toolbar_visible = true;
+    snprintf(
+        viewer->fullscreen_label,
+        sizeof(viewer->fullscreen_label),
+        "%s",
+        IMGORG_VIEWER_FULLSCREEN_LABEL
+    );
     (void) imgorg_browser_window_update_viewer_title(viewer);
     memset(&definition, 0, sizeof(definition));
-    definition.visible.x0 = 192 + (int) (viewer_count % 8) * 16;
-    definition.visible.y0 = 192 + (int) (viewer_count % 8) * 16;
-    definition.visible.x1 = definition.visible.x0 + BROWSER_VISIBLE_WIDTH;
-    definition.visible.y1 = definition.visible.y0 + BROWSER_VISIBLE_HEIGHT;
+    imgorg_browser_window_read_desktop_size(
+        &desktop_width,
+        &desktop_height
+    );
+    viewer_width = desktop_width * 3 / 4;
+    viewer_height = desktop_height * 3 / 4;
+    if (viewer_width < 640) {
+        viewer_width = 640;
+    }
+    if (viewer_height < 480) {
+        viewer_height = 480;
+    }
+    definition.visible.x0 = (desktop_width - viewer_width) / 2 +
+        (int) (viewer_count % 5) * 8;
+    definition.visible.y0 = (desktop_height - viewer_height) / 2 +
+        (int) (viewer_count % 5) * 8;
+    definition.visible.x1 = definition.visible.x0 + viewer_width;
+    definition.visible.y1 = definition.visible.y0 + viewer_height;
     definition.next = wimp_TOP;
     definition.flags =
         wimp_WINDOW_MOVEABLE |
@@ -1443,19 +2228,23 @@ static imgorg_viewer_window *imgorg_browser_window_create_viewer(
         wimp_WINDOW_TOGGLE_ICON |
         wimp_WINDOW_SIZE_ICON |
         wimp_WINDOW_SCROLL |
+        wimp_WINDOW_IGNORE_XEXTENT |
+        wimp_WINDOW_IGNORE_YEXTENT |
         wimp_WINDOW_VSCROLL |
         wimp_WINDOW_NEW_FORMAT;
     definition.title_fg = wimp_COLOUR_BLACK;
     definition.title_bg = wimp_COLOUR_LIGHT_GREY;
     definition.work_fg = wimp_COLOUR_BLACK;
-    definition.work_bg = wimp_COLOUR_WHITE;
+    definition.work_bg = wimp_COLOUR_VERY_LIGHT_GREY;
     definition.scroll_outer = wimp_COLOUR_MID_LIGHT_GREY;
     definition.scroll_inner = wimp_COLOUR_VERY_LIGHT_GREY;
     definition.highlight_bg = wimp_COLOUR_CREAM;
-    definition.extra_flags = wimp_WINDOW_USE_EXTENDED_SCROLL_REQUEST;
+    definition.extra_flags =
+        wimp_WINDOW_USE_EXTENDED_SCROLL_REQUEST |
+        wimp_WINDOW_ALWAYS3D;
     definition.extent.x0 = 0;
-    definition.extent.y0 = -2048;
-    definition.extent.x1 = 2048;
+    definition.extent.y0 = -desktop_height;
+    definition.extent.x1 = desktop_width;
     definition.extent.y1 = 0;
     definition.title_flags =
         wimp_ICON_TEXT |
@@ -1465,13 +2254,91 @@ static imgorg_viewer_window *imgorg_browser_window_create_viewer(
     definition.work_flags =
         wimp_BUTTON_CLICK_DRAG << wimp_ICON_BUTTON_TYPE_SHIFT;
     definition.sprite_area = wimpspriteop_AREA;
-    definition.xmin = 320;
-    definition.ymin = 240;
+    definition.xmin = 1;
+    definition.ymin = 1;
     definition.title_data.indirected_text.text = viewer->title;
     definition.title_data.indirected_text.validation = (char *) -1;
     definition.title_data.indirected_text.size = sizeof(viewer->title);
-    definition.icon_count = 0;
-    *error_out = xwimp_create_window(&definition, &viewer->handle);
+    definition.icon_count = VIEWER_TOOLBAR_ICON_COUNT;
+
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].extent.x0 = 0;
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].extent.y0 =
+        -VIEWER_TOOLBAR_HEIGHT;
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].extent.x1 =
+        BROWSER_WORKSPACE_WIDTH;
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].extent.y1 = 0;
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].flags =
+        wimp_ICON_TEXT |
+        wimp_ICON_BORDER |
+        wimp_ICON_FILLED |
+        wimp_ICON_INDIRECTED |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (wimp_COLOUR_VERY_LIGHT_GREY << wimp_ICON_BG_COLOUR_SHIFT);
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].data.indirected_text.text =
+        IMGORG_EMPTY_ICON_TEXT;
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].data.indirected_text.validation =
+        IMGORG_BORDER_RIDGE;
+    definition.icons[VIEWER_TOOLBAR_BACKGROUND].data.indirected_text.size =
+        sizeof(IMGORG_EMPTY_ICON_TEXT);
+
+    definition.icons[VIEWER_TOOLBAR_BACK].extent.x0 = 8;
+    definition.icons[VIEWER_TOOLBAR_BACK].extent.y0 = -64;
+    definition.icons[VIEWER_TOOLBAR_BACK].extent.x1 = 56;
+    definition.icons[VIEWER_TOOLBAR_BACK].extent.y1 = -8;
+    definition.icons[VIEWER_TOOLBAR_FORWARD].extent.x0 = 64;
+    definition.icons[VIEWER_TOOLBAR_FORWARD].extent.y0 = -64;
+    definition.icons[VIEWER_TOOLBAR_FORWARD].extent.x1 = 112;
+    definition.icons[VIEWER_TOOLBAR_FORWARD].extent.y1 = -8;
+    definition.icons[VIEWER_TOOLBAR_ACTUAL_SIZE].extent.x0 = 120;
+    definition.icons[VIEWER_TOOLBAR_ACTUAL_SIZE].extent.y0 = -64;
+    definition.icons[VIEWER_TOOLBAR_ACTUAL_SIZE].extent.x1 = 200;
+    definition.icons[VIEWER_TOOLBAR_ACTUAL_SIZE].extent.y1 = -8;
+    definition.icons[VIEWER_TOOLBAR_FIT].extent.x0 = 208;
+    definition.icons[VIEWER_TOOLBAR_FIT].extent.y0 = -64;
+    definition.icons[VIEWER_TOOLBAR_FIT].extent.x1 = 288;
+    definition.icons[VIEWER_TOOLBAR_FIT].extent.y1 = -8;
+    definition.icons[VIEWER_TOOLBAR_FULLSCREEN].extent.x0 = 296;
+    definition.icons[VIEWER_TOOLBAR_FULLSCREEN].extent.y0 = -64;
+    definition.icons[VIEWER_TOOLBAR_FULLSCREEN].extent.x1 = 544;
+    definition.icons[VIEWER_TOOLBAR_FULLSCREEN].extent.y1 = -8;
+
+    {
+        int icon;
+        char *const labels[] = {
+            IMGORG_VIEWER_BACK_LABEL,
+            IMGORG_VIEWER_FORWARD_LABEL,
+            IMGORG_VIEWER_ACTUAL_LABEL,
+            IMGORG_VIEWER_FIT_LABEL,
+            viewer->fullscreen_label
+        };
+
+        for (icon = VIEWER_TOOLBAR_BACK;
+             icon <= VIEWER_TOOLBAR_FULLSCREEN;
+             ++icon) {
+            definition.icons[icon].flags =
+                wimp_ICON_TEXT |
+                wimp_ICON_BORDER |
+                wimp_ICON_HCENTRED |
+                wimp_ICON_VCENTRED |
+                wimp_ICON_FILLED |
+                wimp_ICON_INDIRECTED |
+                (wimp_BUTTON_CLICK << wimp_ICON_BUTTON_TYPE_SHIFT) |
+                (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+                (wimp_COLOUR_VERY_LIGHT_GREY << wimp_ICON_BG_COLOUR_SHIFT);
+            definition.icons[icon].data.indirected_text.text =
+                labels[icon - VIEWER_TOOLBAR_BACK];
+            definition.icons[icon].data.indirected_text.validation =
+                IMGORG_BORDER_ACTION;
+            definition.icons[icon].data.indirected_text.size =
+                icon == VIEWER_TOOLBAR_FULLSCREEN ?
+                    sizeof(viewer->fullscreen_label) :
+                    strlen(labels[icon - VIEWER_TOOLBAR_BACK]) + 1;
+        }
+    }
+    *error_out = xwimp_create_window(
+        (wimp_window *) &definition,
+        &viewer->handle
+    );
     if (*error_out != NULL) {
         free(viewer);
         return NULL;
@@ -1495,7 +2362,18 @@ static os_error *imgorg_browser_window_open_viewer(
         return error;
     }
     state.next = wimp_TOP;
-    return xwimp_open_window((wimp_open *) &state);
+    error = xwimp_open_window((wimp_open *) &state);
+    if (error != NULL) {
+        return error;
+    }
+    return xwimp_set_caret_position(
+        viewer->handle,
+        wimp_ICON_WINDOW,
+        0,
+        0,
+        1 << 25,
+        -1
+    );
 }
 
 static os_error *imgorg_browser_window_show_image(
@@ -1562,18 +2440,27 @@ static void imgorg_browser_window_set_thumbnail_priority(
     int visible_height
 )
 {
-    const int row_height = THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP;
+    const int row_height =
+        imgorg_browser_window_thumbnail_cell_height(browser) +
+        THUMBNAIL_GAP;
+    size_t columns = imgorg_browser_window_thumbnail_columns(browser);
     size_t first_row;
     size_t visible_rows;
 
     if (yscroll > 0) {
         yscroll = 0;
     }
-    first_row = (size_t) (-yscroll / row_height);
+    if (-yscroll > WORKSPACE_HEADER_HEIGHT) {
+        first_row = (size_t) (
+            (-yscroll - WORKSPACE_HEADER_HEIGHT) / row_height
+        );
+    } else {
+        first_row = 0;
+    }
     visible_rows = (size_t) ((visible_height + row_height - 1) / row_height);
-    browser->thumbnail_priority_start = first_row * THUMBNAIL_COLUMNS;
+    browser->thumbnail_priority_start = first_row * columns;
     browser->thumbnail_priority_end =
-        (first_row + visible_rows + 1) * THUMBNAIL_COLUMNS;
+        (first_row + visible_rows + 1) * columns;
 }
 
 static bool imgorg_browser_window_ensure_thumbnail_slots(
@@ -1624,16 +2511,26 @@ static size_t imgorg_browser_window_next_thumbnail_index(
 )
 {
     size_t index;
+    size_t visible_index;
+    size_t visible_count =
+        imgorg_browser_window_visible_image_count(browser);
     size_t priority_end = browser->thumbnail_priority_end;
 
-    if (priority_end > browser->images.count) {
-        priority_end = browser->images.count;
+    if (priority_end > visible_count) {
+        priority_end = visible_count;
     }
-    for (index = browser->thumbnail_priority_start;
-         index < priority_end;
-         ++index) {
+    for (visible_index = browser->thumbnail_priority_start;
+         visible_index < priority_end;
+         ++visible_index) {
         const imgorg_image_entry *entry;
 
+        index = imgorg_browser_window_actual_image_index(
+            browser,
+            visible_index
+        );
+        if (index == SIZE_MAX) {
+            continue;
+        }
         if (browser->thumbnails[index].attempted) {
             continue;
         }
@@ -1668,22 +2565,63 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
 {
     wimp_window definition;
     wimp_WINDOW(1) loading_definition;
+    wimp_WINDOW(ALBUM_DIALOG_ICON_COUNT) album_definition;
     os_error *error;
+    int desktop_width;
+    int desktop_height;
+    int initial_width;
+    int initial_height;
+    int usable_y0;
+    size_t loaded_folder_count;
 
     if (browser == NULL) {
         return NULL;
     }
 
     memset(browser, 0, sizeof(*browser));
+    browser->thumbnail_cell_width = THUMBNAIL_DEFAULT_CELL_WIDTH;
     imgorg_image_list_init(&browser->images);
+    imgorg_folder_list_init(&browser->folders);
+    imgorg_album_list_init(&browser->albums);
     imgorg_directory_scanner_init(&browser->scanner);
+    if (!imgorg_library_catalog_load(
+            IMGORG_LIBRARY_FILE,
+            &browser->folders,
+            &browser->images,
+            &browser->albums
+        )) {
+        imgorg_folder_list_destroy(&browser->folders);
+        imgorg_album_list_destroy(&browser->albums);
+        imgorg_image_list_destroy(&browser->images);
+        return imgorg_browser_window_error(
+            "The Focal library catalogue could not be read"
+        );
+    }
+    /*
+     * Imported folders are catalogue sources, not live views. Existing
+     * sources are not silently re-imported at startup, so an explicit
+     * "Remove from library" remains removed.
+     */
+    loaded_folder_count = browser->folders.count;
+    imgorg_browser_window_prune_empty_folders(browser);
+    browser->library_dirty =
+        browser->folders.count != loaded_folder_count;
+    browser->folder_scan_index = browser->folders.count;
     memset(&definition, 0, sizeof(definition));
     (void) imgorg_browser_window_update_title(browser);
 
-    definition.visible.x0 = 128;
-    definition.visible.y0 = 128;
-    definition.visible.x1 = 128 + BROWSER_VISIBLE_WIDTH;
-    definition.visible.y1 = 128 + BROWSER_VISIBLE_HEIGHT;
+    imgorg_browser_window_read_desktop_size(
+        &desktop_width,
+        &desktop_height
+    );
+    initial_width = desktop_width * 3 / 5;
+    initial_height = desktop_height * 3 / 4;
+    usable_y0 = 96;
+    definition.visible.x0 = (desktop_width - initial_width) / 2;
+    definition.visible.y0 =
+        usable_y0 + (desktop_height - usable_y0 - initial_height) / 2;
+    definition.visible.x1 = definition.visible.x0 + initial_width;
+    definition.visible.y1 = definition.visible.y0 + initial_height;
     definition.xscroll = 0;
     definition.yscroll = 0;
     definition.next = wimp_TOP;
@@ -1696,21 +2634,25 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
         wimp_WINDOW_TOGGLE_ICON |
         wimp_WINDOW_SIZE_ICON |
         wimp_WINDOW_SCROLL |
+        wimp_WINDOW_IGNORE_XEXTENT |
+        wimp_WINDOW_IGNORE_YEXTENT |
         wimp_WINDOW_VSCROLL |
         wimp_WINDOW_NEW_FORMAT;
 
     definition.title_fg = wimp_COLOUR_BLACK;
     definition.title_bg = wimp_COLOUR_LIGHT_GREY;
     definition.work_fg = wimp_COLOUR_BLACK;
-    definition.work_bg = wimp_COLOUR_WHITE;
+    definition.work_bg = wimp_COLOUR_VERY_LIGHT_GREY;
     definition.scroll_outer = wimp_COLOUR_MID_LIGHT_GREY;
     definition.scroll_inner = wimp_COLOUR_VERY_LIGHT_GREY;
     definition.highlight_bg = wimp_COLOUR_CREAM;
-    definition.extra_flags = wimp_WINDOW_USE_EXTENDED_SCROLL_REQUEST;
+    definition.extra_flags =
+        wimp_WINDOW_USE_EXTENDED_SCROLL_REQUEST |
+        wimp_WINDOW_ALWAYS3D;
 
     definition.extent.x0 = 0;
     definition.extent.y0 = -2048;
-    definition.extent.x1 = 2048;
+    definition.extent.x1 = BROWSER_WORKSPACE_WIDTH;
     definition.extent.y1 = 0;
 
     definition.title_flags =
@@ -1723,8 +2665,8 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
         wimp_BUTTON_DOUBLE_CLICK_DRAG << wimp_ICON_BUTTON_TYPE_SHIFT;
 
     definition.sprite_area = wimpspriteop_AREA;
-    definition.xmin = 320;
-    definition.ymin = 240;
+    definition.xmin = 960;
+    definition.ymin = 480;
 
     definition.title_data.indirected_text.text = browser->title;
     definition.title_data.indirected_text.validation = (char *) -1;
@@ -1734,6 +2676,9 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
 
     error = xwimp_create_window(&definition, &browser->handle);
     if (error != NULL) {
+        imgorg_folder_list_destroy(&browser->folders);
+        imgorg_album_list_destroy(&browser->albums);
+        imgorg_image_list_destroy(&browser->images);
         return error;
     }
     browser->created = true;
@@ -1766,7 +2711,7 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     snprintf(
         loading_definition.title_data.text,
         sizeof(loading_definition.title_data.text),
-        "Image Org"
+        "Focal"
     );
     loading_definition.work_flags =
         wimp_BUTTON_NEVER << wimp_ICON_BUTTON_TYPE_SHIFT;
@@ -1797,11 +2742,115 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
         (void) xwimp_delete_window(browser->handle);
         browser->handle = 0;
         browser->created = false;
+        imgorg_folder_list_destroy(&browser->folders);
+        imgorg_album_list_destroy(&browser->albums);
+        imgorg_image_list_destroy(&browser->images);
         return error;
     }
     browser->loading_created = true;
 
-    return NULL;
+    memset(&album_definition, 0, sizeof(album_definition));
+    album_definition.visible.x0 = 320;
+    album_definition.visible.y0 = 320;
+    album_definition.visible.x1 = 320 + ALBUM_DIALOG_WIDTH;
+    album_definition.visible.y1 = 320 + ALBUM_DIALOG_HEIGHT;
+    album_definition.next = wimp_TOP;
+    album_definition.flags =
+        wimp_WINDOW_MOVEABLE |
+        wimp_WINDOW_TITLE_ICON |
+        wimp_WINDOW_CLOSE_ICON |
+        wimp_WINDOW_AUTO_REDRAW |
+        wimp_WINDOW_NEW_FORMAT;
+    album_definition.title_fg = wimp_COLOUR_BLACK;
+    album_definition.title_bg = wimp_COLOUR_LIGHT_GREY;
+    album_definition.work_fg = wimp_COLOUR_BLACK;
+    album_definition.work_bg = wimp_COLOUR_VERY_LIGHT_GREY;
+    album_definition.extent.x0 = 0;
+    album_definition.extent.y0 = -ALBUM_DIALOG_HEIGHT;
+    album_definition.extent.x1 = ALBUM_DIALOG_WIDTH;
+    album_definition.extent.y1 = 0;
+    album_definition.title_flags =
+        wimp_ICON_TEXT | wimp_ICON_HCENTRED | wimp_ICON_VCENTRED;
+    snprintf(album_definition.title_data.text,
+        sizeof(album_definition.title_data.text), "Album");
+    album_definition.work_flags =
+        wimp_BUTTON_NEVER << wimp_ICON_BUTTON_TYPE_SHIFT;
+    album_definition.sprite_area = wimpspriteop_AREA;
+    album_definition.xmin = ALBUM_DIALOG_WIDTH;
+    album_definition.ymin = ALBUM_DIALOG_HEIGHT;
+    album_definition.icon_count = ALBUM_DIALOG_ICON_COUNT;
+
+    album_definition.icons[ALBUM_DIALOG_LABEL].extent =
+        (os_box) {20, -72, 180, -24};
+    album_definition.icons[ALBUM_DIALOG_LABEL].flags =
+        wimp_ICON_TEXT | wimp_ICON_VCENTRED |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT);
+    snprintf(album_definition.icons[ALBUM_DIALOG_LABEL].data.text,
+        sizeof(album_definition.icons[ALBUM_DIALOG_LABEL].data.text),
+        "Album name:");
+    album_definition.icons[ALBUM_DIALOG_NAME].extent =
+        (os_box) {200, -72, 500, -24};
+    album_definition.icons[ALBUM_DIALOG_NAME].flags =
+        wimp_ICON_TEXT | wimp_ICON_BORDER | wimp_ICON_FILLED |
+        wimp_ICON_INDIRECTED |
+        (wimp_BUTTON_WRITABLE << wimp_ICON_BUTTON_TYPE_SHIFT) |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (wimp_COLOUR_WHITE << wimp_ICON_BG_COLOUR_SHIFT);
+    album_definition.icons[ALBUM_DIALOG_NAME].data.indirected_text.text =
+        browser->album_dialog_name;
+    album_definition.icons[ALBUM_DIALOG_NAME].data.indirected_text.validation =
+        (char *) -1;
+    album_definition.icons[ALBUM_DIALOG_NAME].data.indirected_text.size =
+        sizeof(browser->album_dialog_name);
+    album_definition.icons[ALBUM_DIALOG_CANCEL].extent =
+        (os_box) {244, -152, 364, -96};
+    album_definition.icons[ALBUM_DIALOG_CANCEL].flags =
+        wimp_ICON_TEXT | wimp_ICON_BORDER | wimp_ICON_HCENTRED |
+        wimp_ICON_VCENTRED | wimp_ICON_FILLED | wimp_ICON_INDIRECTED |
+        (wimp_BUTTON_CLICK << wimp_ICON_BUTTON_TYPE_SHIFT) |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (wimp_COLOUR_VERY_LIGHT_GREY << wimp_ICON_BG_COLOUR_SHIFT);
+    album_definition.icons[ALBUM_DIALOG_CANCEL].data.indirected_text.text =
+        IMGORG_ALBUM_DIALOG_CANCEL_LABEL;
+    album_definition.icons[ALBUM_DIALOG_CANCEL].
+        data.indirected_text.validation = IMGORG_BORDER_ACTION;
+    album_definition.icons[ALBUM_DIALOG_CANCEL].data.indirected_text.size =
+        sizeof(IMGORG_ALBUM_DIALOG_CANCEL_LABEL);
+    album_definition.icons[ALBUM_DIALOG_OK].extent =
+        (os_box) {380, -152, 500, -96};
+    album_definition.icons[ALBUM_DIALOG_OK].flags =
+        wimp_ICON_TEXT | wimp_ICON_BORDER | wimp_ICON_HCENTRED |
+        wimp_ICON_VCENTRED | wimp_ICON_FILLED | wimp_ICON_INDIRECTED |
+        (wimp_BUTTON_CLICK << wimp_ICON_BUTTON_TYPE_SHIFT) |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (wimp_COLOUR_VERY_LIGHT_GREY << wimp_ICON_BG_COLOUR_SHIFT);
+    album_definition.icons[ALBUM_DIALOG_OK].data.indirected_text.text =
+        IMGORG_ALBUM_DIALOG_OK_LABEL;
+    album_definition.icons[ALBUM_DIALOG_OK].
+        data.indirected_text.validation = IMGORG_BORDER_ACTION;
+    album_definition.icons[ALBUM_DIALOG_OK].data.indirected_text.size =
+        sizeof(IMGORG_ALBUM_DIALOG_OK_LABEL);
+    error = xwimp_create_window(
+        (wimp_window *) &album_definition,
+        &browser->album_dialog_handle
+    );
+    if (error != NULL) {
+        (void) xwimp_delete_window(browser->loading_handle);
+        (void) xwimp_delete_window(browser->handle);
+        browser->loading_created = false;
+        browser->created = false;
+        imgorg_folder_list_destroy(&browser->folders);
+        imgorg_album_list_destroy(&browser->albums);
+        imgorg_image_list_destroy(&browser->images);
+        return error;
+    }
+    browser->album_dialog_created = true;
+    if (!imgorg_browser_window_ensure_thumbnail_slots(browser)) {
+        return imgorg_browser_window_error(
+            "There is not enough memory for the thumbnail list"
+        );
+    }
+    return imgorg_browser_window_start_next_folder_scan(browser);
 }
 
 os_error *imgorg_browser_window_open(imgorg_browser_window *browser)
@@ -1830,7 +2879,9 @@ bool imgorg_browser_window_owns_window(
 {
     const imgorg_viewer_window *viewer;
 
-    if (browser == NULL || window == browser->handle) {
+    if (browser == NULL || window == browser->handle ||
+        (browser != NULL && browser->album_dialog_created &&
+         window == browser->album_dialog_handle)) {
         return browser != NULL;
     }
     for (viewer = browser->viewers; viewer != NULL; viewer = viewer->next) {
@@ -1912,14 +2963,34 @@ os_error *imgorg_browser_window_handle_open_request(
     }
 
     if (open->w == browser->handle) {
-        if (browser->directory_path[0] != '\0') {
+        int width = open->visible.x1 - open->visible.x0;
+        int height = open->visible.y1 - open->visible.y0;
+        bool width_changed = width != browser->layout_width;
+
+        if (browser->images.count > 0) {
             imgorg_browser_window_set_thumbnail_priority(
                 browser,
                 open->yscroll,
                 open->visible.y1 - open->visible.y0
             );
         }
-        return NULL;
+        *handled = true;
+        error = imgorg_browser_window_update_directory_extent_for_width(
+            browser,
+            width,
+            height
+        );
+        if (error != NULL) {
+            return error;
+        }
+        error = xwimp_open_window((wimp_open *) open);
+        browser->layout_width = width;
+        browser->layout_height = height;
+        if (error == NULL && width_changed) {
+            error = imgorg_browser_window_redraw_thumbnail_canvas(browser);
+        }
+        return error == NULL ?
+            imgorg_browser_window_update_fixed_chrome(browser) : error;
     }
     viewer = imgorg_browser_window_find_viewer(browser, open->w);
     if (viewer == NULL || viewer->sprite_area == NULL) {
@@ -1960,6 +3031,12 @@ os_error *imgorg_browser_window_handle_close_request(
     }
     if (browser == NULL || handled == NULL) {
         return NULL;
+    }
+    if (browser->album_dialog_created &&
+        window == browser->album_dialog_handle) {
+        *handled = true;
+        browser->album_dialog_mode = IMGORG_ALBUM_DIALOG_NONE;
+        return xwimp_close_window(window);
     }
     viewer = imgorg_browser_window_find_viewer(browser, window);
     if (viewer == NULL || viewer->sprite_area == NULL) {
@@ -2174,6 +3251,11 @@ static os_error *imgorg_browser_window_load_image_mode(
             if (viewer == NULL) {
                 return error;
             }
+        } else if (!viewer->toolbar_visible) {
+            error = imgorg_browser_window_set_toolbar_visible(viewer, true);
+            if (error != NULL) {
+                return error;
+            }
         }
     }
     (void) imgorg_browser_window_show_loading(
@@ -2235,46 +3317,92 @@ os_error *imgorg_browser_window_load_directory(
     const char *directory_path
 )
 {
-    int path_length;
+    bool added;
     os_error *error;
 
     if (browser == NULL || directory_path == NULL || directory_path[0] == '\0') {
         return imgorg_browser_window_error("No directory was supplied");
     }
-
-    path_length = snprintf(
-        browser->directory_path,
-        sizeof(browser->directory_path),
-        "%s",
-        directory_path
-    );
-    if (path_length < 0 ||
-        (size_t) path_length >= sizeof(browser->directory_path)) {
-        browser->directory_path[0] = '\0';
-        return imgorg_browser_window_error("The directory path is too long");
+    if (!imgorg_folder_list_add(&browser->folders, directory_path, &added)) {
+        return imgorg_browser_window_error(
+            "There is not enough memory to add that folder"
+        );
     }
-
-    imgorg_browser_window_clear_thumbnails(browser);
-    imgorg_image_list_clear(&browser->images);
-    if (!imgorg_directory_scanner_start(&browser->scanner, directory_path)) {
-        browser->directory_path[0] = '\0';
-        return imgorg_browser_window_error("The directory path is too long");
+    if (added) {
+        browser->library_dirty = true;
     }
-    imgorg_browser_window_copy_leafname(
-        browser->directory_name,
-        sizeof(browser->directory_name),
-        directory_path
-    );
-
-    error = imgorg_browser_window_update_title(browser);
+    error = imgorg_browser_window_save_library(browser);
     if (error != NULL) {
         return error;
     }
-    error = imgorg_browser_window_update_directory_extent(browser);
+    error = imgorg_browser_window_start_next_folder_scan(browser);
     if (error != NULL) {
         return error;
     }
     return imgorg_browser_window_redraw_browser(browser);
+}
+
+os_error *imgorg_browser_window_add_image(
+    imgorg_browser_window *browser,
+    const char *file_name,
+    uint64_t size_bytes,
+    uint32_t load_addr,
+    uint32_t exec_addr,
+    uint32_t file_type
+)
+{
+    imgorg_image_entry entry;
+    char leafname[IMGORG_LEAFNAME_CAPACITY];
+    bool added;
+    os_error *error;
+
+    if (browser == NULL || file_name == NULL || file_name[0] == '\0') {
+        return imgorg_browser_window_error("No image was supplied");
+    }
+    imgorg_browser_window_copy_leafname(
+        leafname,
+        sizeof(leafname),
+        file_name
+    );
+    if (!imgorg_image_entry_init(
+            &entry,
+            file_name,
+            leafname,
+            size_bytes,
+            load_addr,
+            exec_addr,
+            file_type
+        ) ||
+        entry.format == IMGORG_IMAGE_FORMAT_UNKNOWN) {
+        return imgorg_browser_window_error(
+            "Focal can only add Sprite, JPEG and PNG images"
+        );
+    }
+    if (!imgorg_image_list_append_unique(&browser->images, &entry, &added)) {
+        return imgorg_browser_window_error(
+            "There is not enough memory to add that image"
+        );
+    }
+    if (added) {
+        browser->library_dirty = true;
+        if (!imgorg_browser_window_ensure_thumbnail_slots(browser)) {
+            return imgorg_browser_window_error(
+                "There is not enough memory for the thumbnail list"
+            );
+        }
+    }
+    error = imgorg_browser_window_save_library(browser);
+    if (error != NULL) {
+        return error;
+    }
+    error = imgorg_browser_window_update_title(browser);
+    if (error == NULL) {
+        error = imgorg_browser_window_update_directory_extent(browser);
+    }
+    if (error == NULL) {
+        error = imgorg_browser_window_redraw_browser(browser);
+    }
+    return error;
 }
 
 bool imgorg_browser_window_has_background_work(
@@ -2286,7 +3414,8 @@ bool imgorg_browser_window_has_background_work(
     if (browser == NULL) {
         return false;
     }
-    if (browser->scanner.active ||
+    if (browser->thumbnail_slider_dragging ||
+        browser->scanner.active ||
         browser->thumbnail_cursor < browser->images.count) {
         return true;
     }
@@ -2322,6 +3451,7 @@ os_error *imgorg_browser_window_scan_step(imgorg_browser_window *browser)
     }
 
     if (changed) {
+        browser->library_dirty = true;
         if (!imgorg_browser_window_ensure_thumbnail_slots(browser)) {
             return imgorg_browser_window_error(
                 "There is not enough memory for the thumbnail list"
@@ -2415,10 +3545,230 @@ os_error *imgorg_browser_window_scan_step(imgorg_browser_window *browser)
         }
     }
 
+    if (was_active && !browser->scanner.active) {
+        if (browser->library_dirty) {
+            error = imgorg_browser_window_save_library(browser);
+            if (error != NULL) {
+                return error;
+            }
+        }
+        error = imgorg_browser_window_start_next_folder_scan(browser);
+        if (error != NULL) {
+            return error;
+        }
+    }
     if (changed || was_active != browser->scanner.active) {
         return imgorg_browser_window_update_title(browser);
     }
     return NULL;
+}
+
+static os_error *imgorg_browser_window_set_viewer_zoom_mode(
+    imgorg_viewer_window *viewer,
+    bool fit_to_window
+)
+{
+    os_error *error;
+
+    viewer->fit_to_window = fit_to_window;
+    viewer->zoom_percent = 100;
+    viewer->pan_x = 0;
+    viewer->pan_y = 0;
+    error = imgorg_browser_window_update_viewer_title(viewer);
+    if (error != NULL) {
+        return error;
+    }
+    return imgorg_browser_window_redraw_viewer(viewer);
+}
+
+static os_error *imgorg_browser_window_toggle_fullscreen(
+    imgorg_viewer_window *viewer
+)
+{
+    wimp_window_state state;
+    wimp_open open;
+    os_error *error;
+    bool entering_fullscreen;
+    int desktop_width;
+    int desktop_height;
+
+    state.w = viewer->handle;
+    error = xwimp_get_window_state(&state);
+    if (error != NULL) {
+        return error;
+    }
+    open.w = viewer->handle;
+    open.xscroll = state.xscroll;
+    open.yscroll = state.yscroll;
+    open.next = wimp_TOP;
+    entering_fullscreen = !viewer->fullscreen;
+    if (entering_fullscreen) {
+        viewer->restore_visible = state.visible;
+        viewer->restore_xscroll = state.xscroll;
+        viewer->restore_yscroll = state.yscroll;
+        imgorg_browser_window_read_desktop_size(
+            &desktop_width,
+            &desktop_height
+        );
+        open.visible.x0 = 0;
+        open.visible.y0 = 0;
+        open.visible.x1 = desktop_width;
+        open.visible.y1 = desktop_height;
+    } else {
+        open.visible = viewer->restore_visible;
+        open.xscroll = viewer->restore_xscroll;
+        open.yscroll = viewer->restore_yscroll;
+    }
+    error = xwimp_open_window(&open);
+    if (error != NULL) {
+        return error;
+    }
+    viewer->fullscreen = entering_fullscreen;
+    snprintf(
+        viewer->fullscreen_label,
+        sizeof(viewer->fullscreen_label),
+        "%s",
+        viewer->fullscreen ?
+            IMGORG_VIEWER_LEAVE_FULLSCREEN_LABEL :
+            IMGORG_VIEWER_FULLSCREEN_LABEL
+    );
+    error = xwimp_set_icon_state(
+        viewer->handle,
+        VIEWER_TOOLBAR_FULLSCREEN,
+        0,
+        0
+    );
+    return error == NULL ?
+        imgorg_browser_window_redraw_viewer(viewer) : error;
+}
+
+static os_error *imgorg_browser_window_navigate_viewer(
+    imgorg_browser_window *browser,
+    imgorg_viewer_window *viewer,
+    int direction
+)
+{
+    size_t current = SIZE_MAX;
+    size_t step;
+
+    if (browser->images.count < 2) {
+        return NULL;
+    }
+    for (step = 0; step < browser->images.count; ++step) {
+        const imgorg_image_entry *entry =
+            imgorg_image_list_get(&browser->images, step);
+
+        if (strcmp(entry->path, viewer->image_path) == 0) {
+            current = step;
+            break;
+        }
+    }
+    if (current == SIZE_MAX) {
+        return NULL;
+    }
+    for (step = 1; step < browser->images.count; ++step) {
+        size_t index;
+        const imgorg_image_entry *entry;
+
+        if (direction < 0) {
+            index = (current + browser->images.count - step) %
+                browser->images.count;
+        } else {
+            index = (current + step) % browser->images.count;
+        }
+        entry = imgorg_image_list_get(&browser->images, index);
+        if (entry->format == IMGORG_IMAGE_FORMAT_PNG ||
+            entry->format == IMGORG_IMAGE_FORMAT_JPEG) {
+            return imgorg_browser_window_load_image_mode(
+                browser,
+                entry->path,
+                entry->format,
+                viewer->handle
+            );
+        }
+    }
+    return NULL;
+}
+
+static os_error *imgorg_browser_window_set_toolbar_visible(
+    imgorg_viewer_window *viewer,
+    bool visible
+)
+{
+    int icon;
+    os_error *error = NULL;
+
+    if (viewer->toolbar_visible == visible) {
+        return NULL;
+    }
+    for (icon = 0;
+         icon < VIEWER_TOOLBAR_ICON_COUNT && error == NULL;
+         ++icon) {
+        error = xwimp_set_icon_state(
+            viewer->handle,
+            icon,
+            visible ? 0 : wimp_ICON_DELETED,
+            wimp_ICON_DELETED
+        );
+    }
+    if (error != NULL) {
+        return error;
+    }
+    viewer->toolbar_visible = visible;
+    return imgorg_browser_window_redraw_viewer(viewer);
+}
+
+os_error *imgorg_browser_window_handle_key(
+    imgorg_browser_window *browser,
+    const wimp_key *key,
+    bool *handled
+)
+{
+    imgorg_viewer_window *viewer;
+
+    if (handled != NULL) {
+        *handled = false;
+    }
+    if (browser == NULL || key == NULL || handled == NULL) {
+        return NULL;
+    }
+    if (browser->album_dialog_created &&
+        key->w == browser->album_dialog_handle) {
+        if (key->c == wimp_KEY_RETURN) {
+            *handled = true;
+            return imgorg_browser_window_accept_album_dialog(browser);
+        }
+        if (key->c == wimp_KEY_ESCAPE) {
+            *handled = true;
+            browser->album_dialog_mode = IMGORG_ALBUM_DIALOG_NONE;
+            return xwimp_close_window(browser->album_dialog_handle);
+        }
+        return NULL;
+    }
+    viewer = imgorg_browser_window_find_viewer(browser, key->w);
+    if (viewer == NULL || viewer->sprite_area == NULL) {
+        return NULL;
+    }
+    switch (key->c) {
+    case wimp_KEY_LEFT:
+        *handled = true;
+        return imgorg_browser_window_navigate_viewer(browser, viewer, -1);
+
+    case wimp_KEY_RIGHT:
+        *handled = true;
+        return imgorg_browser_window_navigate_viewer(browser, viewer, 1);
+
+    case 'T':
+    case 't':
+        *handled = true;
+        return imgorg_browser_window_set_toolbar_visible(
+            viewer,
+            !viewer->toolbar_visible
+        );
+
+    default:
+        return NULL;
+    }
 }
 
 static bool imgorg_browser_window_thumbnail_at_pointer(
@@ -2432,35 +3782,53 @@ static bool imgorg_browser_window_thumbnail_at_pointer(
     int work_y;
     int cell_x;
     int cell_y;
+    int cell_width;
+    int cell_height;
     size_t column;
     size_t row;
     size_t index;
+    size_t columns;
 
     state.w = browser->handle;
     if (xwimp_get_window_state(&state) != NULL) {
         return false;
     }
+    if (pointer->pos.x < state.visible.x0 + WORKSPACE_LEFT_PANEL_WIDTH ||
+        pointer->pos.x >= state.visible.x1 - WORKSPACE_RIGHT_PANEL_WIDTH) {
+        return false;
+    }
     work_x = pointer->pos.x - state.visible.x0 + state.xscroll;
     work_y = pointer->pos.y - state.visible.y1 + state.yscroll;
-    cell_x = work_x - THUMBNAIL_MARGIN;
-    cell_y = -work_y - THUMBNAIL_MARGIN;
+    columns = imgorg_browser_window_thumbnail_columns_for_width(
+        browser,
+        state.visible.x1 - state.visible.x0
+    );
+    cell_width = imgorg_browser_window_thumbnail_cell_width(browser);
+    cell_height = imgorg_browser_window_thumbnail_cell_height(browser);
+    cell_x = work_x - imgorg_browser_window_thumbnail_grid_x0(
+        browser,
+        state.visible.x1 - state.visible.x0,
+        columns
+    );
+    cell_y = -work_y - WORKSPACE_HEADER_HEIGHT - THUMBNAIL_MARGIN;
     if (cell_x < 0 || cell_y < 0) {
         return false;
     }
 
     column = (size_t) cell_x /
-        (THUMBNAIL_CELL_WIDTH + THUMBNAIL_GAP);
+        (cell_width + THUMBNAIL_GAP);
     row = (size_t) cell_y /
-        (THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP);
-    if (column >= THUMBNAIL_COLUMNS ||
-        cell_x % (THUMBNAIL_CELL_WIDTH + THUMBNAIL_GAP) >=
-            THUMBNAIL_CELL_WIDTH ||
-        cell_y % (THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP) >=
-            THUMBNAIL_CELL_HEIGHT) {
+        (cell_height + THUMBNAIL_GAP);
+    if (column >= columns ||
+        cell_x % (cell_width + THUMBNAIL_GAP) >= cell_width ||
+        cell_y % (cell_height + THUMBNAIL_GAP) >= cell_height) {
         return false;
     }
-    index = row * THUMBNAIL_COLUMNS + column;
-    if (index >= browser->images.count) {
+    index = imgorg_browser_window_actual_image_index(
+        browser,
+        row * columns + column
+    );
+    if (index == SIZE_MAX) {
         return false;
     }
     *index_out = index;
@@ -2487,6 +3855,91 @@ static bool imgorg_browser_window_select_thumbnail(
     return changed;
 }
 
+static bool imgorg_browser_window_toggle_thumbnail(
+    imgorg_browser_window *browser,
+    size_t index
+)
+{
+    if (index >= browser->images.count) {
+        return false;
+    }
+    browser->images.items[index].selected =
+        !browser->images.items[index].selected;
+    return true;
+}
+
+static int imgorg_browser_window_first_album_baseline(
+    const imgorg_browser_window *browser,
+    int visible_y1
+)
+{
+    size_t folder_rows;
+    int y = visible_y1 - 180;
+
+    if (browser->folders.count == 0) {
+        folder_rows = 1;
+    } else {
+        folder_rows = browser->folders.count < 6 ?
+            browser->folders.count : 6;
+        if (browser->folders.count > 6) {
+            ++folder_rows;
+        }
+    }
+    y -= (int) folder_rows * 36;
+    if (browser->images.count > 0) {
+        y -= 36;
+    }
+    y -= 28 + 44 + 5 * 36 + 36 + 52 + 44;
+    return y;
+}
+
+static os_error *imgorg_browser_window_set_filter(
+    imgorg_browser_window *browser,
+    imgorg_library_filter_kind kind,
+    size_t value
+)
+{
+    wimp_window_state state;
+    os_error *error;
+
+    if (kind == IMGORG_LIBRARY_FILTER_FOLDER &&
+        value >= browser->folders.count) {
+        return NULL;
+    }
+    if (kind == IMGORG_LIBRARY_FILTER_RATING &&
+        (value < 1 || value > 5)) {
+        return NULL;
+    }
+    if (kind == IMGORG_LIBRARY_FILTER_ALBUM &&
+        value >= browser->albums.count) {
+        return NULL;
+    }
+    browser->filter_kind = kind;
+    browser->filter_folder_index = value;
+    browser->filter_rating = (unsigned int) value;
+    browser->filter_album_index = value;
+    (void) imgorg_browser_window_select_thumbnail(browser, SIZE_MAX);
+    browser->thumbnail_priority_start = 0;
+    browser->thumbnail_priority_end =
+        imgorg_browser_window_thumbnail_columns(browser) * 3;
+    error = imgorg_browser_window_update_directory_extent(browser);
+    if (error != NULL) {
+        return error;
+    }
+    state.w = browser->handle;
+    error = xwimp_get_window_state(&state);
+    if (error == NULL) {
+        state.xscroll = 0;
+        state.yscroll = 0;
+        state.next = wimp_TOP;
+        error = xwimp_open_window((wimp_open *) &state);
+    }
+    if (error == NULL) {
+        error = imgorg_browser_window_redraw_browser(browser);
+    }
+    return error;
+}
+
 os_error *imgorg_browser_window_handle_pointer(
     imgorg_browser_window *browser,
     const wimp_pointer *pointer
@@ -2500,15 +3953,264 @@ os_error *imgorg_browser_window_handle_pointer(
     if (browser == NULL || pointer == NULL) {
         return NULL;
     }
+    if (browser->album_dialog_created &&
+        pointer->w == browser->album_dialog_handle &&
+        (pointer->buttons & wimp_CLICK_SELECT) != 0) {
+        if (pointer->i == ALBUM_DIALOG_CANCEL) {
+            browser->album_dialog_mode = IMGORG_ALBUM_DIALOG_NONE;
+            return xwimp_close_window(browser->album_dialog_handle);
+        }
+        if (pointer->i == ALBUM_DIALOG_OK) {
+            return imgorg_browser_window_accept_album_dialog(browser);
+        }
+        return NULL;
+    }
+    if (browser->album_dialog_mode != IMGORG_ALBUM_DIALOG_NONE) {
+        return NULL;
+    }
 
     if (pointer->w == browser->handle) {
         size_t index;
         const imgorg_image_entry *entry;
         bool selection_changed;
+        os_box slider_track;
 
-        if (browser->directory_path[0] == '\0' ||
-            (pointer->buttons != wimp_SINGLE_SELECT &&
-             pointer->buttons != wimp_DOUBLE_SELECT)) {
+        if (pointer->buttons != wimp_SINGLE_SELECT &&
+            pointer->buttons != wimp_SINGLE_ADJUST &&
+            pointer->buttons != wimp_DOUBLE_SELECT &&
+            pointer->buttons != wimp_CLICK_MENU &&
+            pointer->buttons != wimp_DRAG_SELECT) {
+            return NULL;
+        }
+        state.w = browser->handle;
+        error = xwimp_get_window_state(&state);
+        if (error != NULL) {
+            return error;
+        }
+        imgorg_browser_window_thumbnail_slider_track(
+            &state.visible,
+            &slider_track
+        );
+        if ((pointer->buttons == wimp_SINGLE_SELECT ||
+             pointer->buttons == wimp_DRAG_SELECT) &&
+            pointer->pos.x >=
+                slider_track.x0 - THUMBNAIL_SLIDER_KNOB_WIDTH / 2 &&
+            pointer->pos.x <=
+                slider_track.x1 + THUMBNAIL_SLIDER_KNOB_WIDTH / 2 &&
+            pointer->pos.y >= state.visible.y1 - 60 &&
+            pointer->pos.y < state.visible.y1 - 12) {
+            error = imgorg_browser_window_set_thumbnail_width_from_pointer(
+                browser,
+                pointer->pos.x
+            );
+            if (error != NULL || pointer->buttons != wimp_DRAG_SELECT) {
+                return error;
+            }
+            memset(&drag, 0, sizeof(drag));
+            drag.w = browser->handle;
+            drag.type = wimp_DRAG_USER_POINT;
+            drag.initial.x0 = pointer->pos.x;
+            drag.initial.y0 = pointer->pos.y;
+            drag.initial.x1 = pointer->pos.x;
+            drag.initial.y1 = pointer->pos.y;
+            drag.bbox.x0 = slider_track.x0;
+            drag.bbox.y0 = -32768;
+            drag.bbox.x1 = slider_track.x1;
+            drag.bbox.y1 = 32767;
+            error = xwimp_drag_box(&drag);
+            if (error == NULL) {
+                browser->thumbnail_slider_dragging = true;
+            }
+            return error;
+        }
+        if (browser->images.count == 0) {
+            return NULL;
+        }
+        if (pointer->pos.x <
+                state.visible.x0 + WORKSPACE_LEFT_PANEL_WIDTH) {
+            int y;
+            int album_y;
+            size_t folder_count =
+                browser->folders.count < 6 ? browser->folders.count : 6;
+            size_t folder_index;
+            size_t album_index;
+
+            album_y = imgorg_browser_window_first_album_baseline(
+                browser,
+                state.visible.y1
+            );
+            for (album_index = 0;
+                 album_index < browser->albums.count && album_index < 6;
+                 ++album_index) {
+                if (pointer->pos.y >= album_y - 12 &&
+                    pointer->pos.y < album_y + 24) {
+                    if (pointer->buttons == wimp_CLICK_MENU) {
+                        browser->context_menu_open = true;
+                        browser->context_album_menu = true;
+                        browser->context_album_index = album_index;
+                        return xwimp_create_menu(
+                            imgorg_browser_window_album_menu(),
+                            pointer->pos.x,
+                            pointer->pos.y
+                        );
+                    }
+                    if (pointer->buttons == wimp_SINGLE_SELECT) {
+                        return imgorg_browser_window_set_filter(
+                            browser,
+                            IMGORG_LIBRARY_FILTER_ALBUM,
+                            album_index
+                        );
+                    }
+                    return NULL;
+                }
+                album_y -= 36;
+            }
+            if (pointer->buttons != wimp_SINGLE_SELECT) {
+                return NULL;
+            }
+            if (pointer->pos.y >= state.visible.y1 - 108 &&
+                pointer->pos.y < state.visible.y1 - 68) {
+                return imgorg_browser_window_set_filter(
+                    browser,
+                    IMGORG_LIBRARY_FILTER_ALL,
+                    0
+                );
+            }
+            y = state.visible.y1 - 180;
+            for (folder_index = 0;
+                 folder_index < folder_count;
+                 ++folder_index) {
+                if (pointer->pos.y >= y - 12 &&
+                    pointer->pos.y < y + 24) {
+                    return imgorg_browser_window_set_filter(
+                        browser,
+                        IMGORG_LIBRARY_FILTER_FOLDER,
+                        folder_index
+                    );
+                }
+                y -= 36;
+            }
+            if (browser->folders.count == 0) {
+                y -= 36;
+            } else if (browser->folders.count > 6) {
+                y -= 36;
+            }
+            if (browser->images.count > 0) {
+                y -= 36;
+            }
+            y -= 28;
+            y -= 44;
+            for (index = 1; index <= 5; ++index) {
+                if (pointer->pos.y >= y - 12 &&
+                    pointer->pos.y < y + 24) {
+                    return imgorg_browser_window_set_filter(
+                        browser,
+                        IMGORG_LIBRARY_FILTER_RATING,
+                        index
+                    );
+                }
+                y -= 36;
+            }
+            if (pointer->pos.y >= y - 12 &&
+                pointer->pos.y < y + 24) {
+                return imgorg_browser_window_set_filter(
+                    browser,
+                    IMGORG_LIBRARY_FILTER_FAVOURITES,
+                    0
+                );
+            }
+            return NULL;
+        }
+        if (pointer->pos.x >=
+                state.visible.x1 - WORKSPACE_RIGHT_PANEL_WIDTH) {
+            imgorg_image_entry *selected = NULL;
+            os_box right;
+            os_box button;
+            size_t selected_index;
+            unsigned int rating;
+
+            if (pointer->buttons != wimp_SINGLE_SELECT) {
+                return NULL;
+            }
+            for (selected_index = 0;
+                 selected_index < browser->images.count;
+                 ++selected_index) {
+                if (browser->images.items[selected_index].selected) {
+                    selected = &browser->images.items[selected_index];
+                    break;
+                }
+            }
+            if (selected == NULL) {
+                return NULL;
+            }
+            right.x0 =
+                state.visible.x1 - WORKSPACE_RIGHT_PANEL_WIDTH;
+            right.x1 = state.visible.x1;
+            right.y0 = state.visible.y0;
+            right.y1 = state.visible.y1;
+            for (rating = 1; rating <= 5; ++rating) {
+                imgorg_browser_window_inspector_rating_box(
+                    &right,
+                    state.visible.y1 - 312,
+                    rating,
+                    &button
+                );
+                if (imgorg_browser_window_point_in_box(
+                        &pointer->pos,
+                        &button
+                    )) {
+                    selected->rating =
+                        selected->rating == rating ? 0 : rating;
+                    if (!imgorg_browser_window_entry_matches_filter(
+                            browser,
+                            selected
+                        )) {
+                        selected->selected = false;
+                    }
+                    browser->library_dirty = true;
+                    error = imgorg_browser_window_save_library(browser);
+                    if (error == NULL) {
+                        error =
+                            imgorg_browser_window_update_directory_extent(
+                                browser
+                            );
+                    }
+                    return error == NULL ?
+                        imgorg_browser_window_redraw_browser(browser) : error;
+                }
+            }
+            imgorg_browser_window_inspector_favourite_box(
+                &right,
+                state.visible.y1 - 372,
+                &button
+            );
+            if (imgorg_browser_window_point_in_box(
+                    &pointer->pos,
+                    &button
+                )) {
+                selected->favourite = !selected->favourite;
+                if (!imgorg_browser_window_entry_matches_filter(
+                        browser,
+                        selected
+                    )) {
+                    selected->selected = false;
+                }
+                browser->library_dirty = true;
+                error = imgorg_browser_window_save_library(browser);
+                if (error == NULL) {
+                    error = imgorg_browser_window_update_directory_extent(
+                        browser
+                    );
+                }
+                return error == NULL ?
+                    imgorg_browser_window_redraw_browser(browser) : error;
+            }
+            return NULL;
+        }
+        if (pointer->pos.x <
+                state.visible.x0 + WORKSPACE_LEFT_PANEL_WIDTH ||
+            pointer->pos.x >=
+                state.visible.x1 - WORKSPACE_RIGHT_PANEL_WIDTH) {
             return NULL;
         }
         if (!imgorg_browser_window_thumbnail_at_pointer(
@@ -2522,13 +4224,72 @@ os_error *imgorg_browser_window_handle_pointer(
             }
             return NULL;
         }
-        selection_changed = imgorg_browser_window_select_thumbnail(
-            browser,
-            index
-        );
+        if (pointer->buttons == wimp_SINGLE_ADJUST) {
+            selection_changed = imgorg_browser_window_toggle_thumbnail(
+                browser,
+                index
+            );
+        } else if ((pointer->buttons == wimp_CLICK_MENU ||
+                    pointer->buttons == wimp_DRAG_SELECT) &&
+                   browser->images.items[index].selected) {
+            selection_changed = false;
+        } else {
+            selection_changed = imgorg_browser_window_select_thumbnail(
+                browser,
+                index
+            );
+        }
+        if (pointer->buttons == wimp_CLICK_MENU) {
+            wimp_menu *menu = imgorg_browser_window_thumbnail_menu(browser);
+
+            browser->context_menu_open = true;
+            browser->context_album_menu = false;
+            browser->context_image_index = index;
+            if (browser->images.items[index].format ==
+                    IMGORG_IMAGE_FORMAT_PNG ||
+                browser->images.items[index].format ==
+                    IMGORG_IMAGE_FORMAT_JPEG) {
+                menu->entries[0].icon_flags &= ~wimp_ICON_SHADED;
+            } else {
+                menu->entries[0].icon_flags |= wimp_ICON_SHADED;
+            }
+            if (selection_changed) {
+                error = imgorg_browser_window_redraw_browser(browser);
+                if (error != NULL) {
+                    return error;
+                }
+            }
+            return xwimp_create_menu(
+                menu,
+                pointer->pos.x,
+                pointer->pos.y
+            );
+        }
         if (pointer->buttons == wimp_SINGLE_SELECT) {
             return selection_changed ?
                 imgorg_browser_window_redraw_browser(browser) : NULL;
+        }
+        if (pointer->buttons == wimp_SINGLE_ADJUST) {
+            return imgorg_browser_window_redraw_browser(browser);
+        }
+        if (pointer->buttons == wimp_DRAG_SELECT) {
+            memset(&drag, 0, sizeof(drag));
+            drag.w = browser->handle;
+            drag.type = wimp_DRAG_USER_FIXED;
+            drag.initial.x0 = pointer->pos.x - 48;
+            drag.initial.y0 = pointer->pos.y - 32;
+            drag.initial.x1 = pointer->pos.x + 48;
+            drag.initial.y1 = pointer->pos.y + 32;
+            drag.bbox.x0 = -32768;
+            drag.bbox.y0 = -32768;
+            drag.bbox.x1 = 32767;
+            drag.bbox.y1 = 32767;
+            error = xwimp_drag_box(&drag);
+            if (error == NULL) {
+                browser->thumbnail_image_dragging = true;
+                browser->thumbnail_drag_image_index = index;
+            }
+            return error;
         }
         entry = imgorg_image_list_get(&browser->images, index);
         if (entry->format != IMGORG_IMAGE_FORMAT_PNG &&
@@ -2546,18 +4307,61 @@ os_error *imgorg_browser_window_handle_pointer(
     if (viewer == NULL || viewer->sprite_area == NULL) {
         return NULL;
     }
+    error = xwimp_set_caret_position(
+        viewer->handle,
+        wimp_ICON_WINDOW,
+        0,
+        0,
+        1 << 25,
+        -1
+    );
+    if (error != NULL) {
+        return error;
+    }
+
+    if (viewer->toolbar_visible &&
+        pointer->i >= VIEWER_TOOLBAR_BACKGROUND &&
+        pointer->i <= VIEWER_TOOLBAR_FULLSCREEN) {
+        if ((pointer->buttons & wimp_CLICK_SELECT) == 0) {
+            return NULL;
+        }
+        switch (pointer->i) {
+        case VIEWER_TOOLBAR_BACK:
+            return imgorg_browser_window_navigate_viewer(
+                browser,
+                viewer,
+                -1
+            );
+
+        case VIEWER_TOOLBAR_FORWARD:
+            return imgorg_browser_window_navigate_viewer(
+                browser,
+                viewer,
+                1
+            );
+
+        case VIEWER_TOOLBAR_ACTUAL_SIZE:
+            return imgorg_browser_window_set_viewer_zoom_mode(
+                viewer,
+                false
+            );
+
+        case VIEWER_TOOLBAR_FIT:
+            return imgorg_browser_window_set_viewer_zoom_mode(
+                viewer,
+                true
+            );
+
+        case VIEWER_TOOLBAR_FULLSCREEN:
+            return imgorg_browser_window_toggle_fullscreen(viewer);
+
+        default:
+            return NULL;
+        }
+    }
 
     if ((pointer->buttons & wimp_CLICK_ADJUST) != 0) {
-        os_error *title_error;
-
-        viewer->fit_to_window = true;
-        viewer->pan_x = 0;
-        viewer->pan_y = 0;
-        title_error = imgorg_browser_window_update_viewer_title(viewer);
-        if (title_error != NULL) {
-            return title_error;
-        }
-        return imgorg_browser_window_redraw_viewer(viewer);
+        return imgorg_browser_window_set_viewer_zoom_mode(viewer, true);
     }
 
     if ((pointer->buttons &
@@ -2604,6 +4408,318 @@ os_error *imgorg_browser_window_handle_pointer(
     return error;
 }
 
+static os_error *imgorg_browser_window_remove_library_image(
+    imgorg_browser_window *browser,
+    size_t index
+)
+{
+    os_error *error;
+    char removed_path[IMGORG_PATH_CAPACITY];
+
+    if (index >= browser->images.count) {
+        return NULL;
+    }
+    snprintf(removed_path, sizeof(removed_path), "%s",
+        browser->images.items[index].path);
+    if (index < browser->thumbnail_count) {
+        free(browser->thumbnails[index].sprite_area);
+        if (index + 1 < browser->thumbnail_count) {
+            memmove(
+                &browser->thumbnails[index],
+                &browser->thumbnails[index + 1],
+                (browser->thumbnail_count - index - 1) *
+                    sizeof(*browser->thumbnails)
+            );
+        }
+        --browser->thumbnail_count;
+    }
+    if (!imgorg_image_list_remove_at(&browser->images, index)) {
+        return NULL;
+    }
+    imgorg_album_list_remove_image(&browser->albums, removed_path);
+    imgorg_browser_window_prune_empty_folders(browser);
+    if (browser->thumbnail_cursor > index) {
+        --browser->thumbnail_cursor;
+    }
+    browser->thumbnail_priority_start = 0;
+    browser->thumbnail_priority_end =
+        imgorg_browser_window_thumbnail_columns(browser) * 3;
+    browser->library_dirty = true;
+    error = imgorg_browser_window_save_library(browser);
+    if (error == NULL) {
+        error = imgorg_browser_window_update_title(browser);
+    }
+    if (error == NULL) {
+        error = imgorg_browser_window_update_directory_extent(browser);
+    }
+    if (error == NULL) {
+        error = imgorg_browser_window_redraw_browser(browser);
+    }
+    return error;
+}
+
+static os_error *imgorg_browser_window_add_selection_to_album(
+    imgorg_browser_window *browser,
+    size_t album_index
+)
+{
+    size_t index;
+    bool changed = false;
+
+    if (album_index >= browser->albums.count) {
+        return NULL;
+    }
+    for (index = 0; index < browser->images.count; ++index) {
+        bool added;
+
+        if (!browser->images.items[index].selected) {
+            continue;
+        }
+        if (!imgorg_album_add_image(
+                &browser->albums.items[album_index],
+                browser->images.items[index].path,
+                &added
+            )) {
+            return imgorg_browser_window_error(
+                "There is not enough memory to update the album"
+            );
+        }
+        changed = changed || added;
+    }
+    if (!changed) {
+        return NULL;
+    }
+    browser->library_dirty = true;
+    return imgorg_browser_window_save_library(browser);
+}
+
+static os_error *imgorg_browser_window_show_album_dialog(
+    imgorg_browser_window *browser,
+    imgorg_album_dialog_mode mode,
+    size_t album_index
+)
+{
+    wimp_window_state parent;
+    wimp_open open;
+    os_error *error;
+
+    if (!browser->album_dialog_created) {
+        return NULL;
+    }
+    browser->album_dialog_mode = mode;
+    browser->album_dialog_index = album_index;
+    if (mode == IMGORG_ALBUM_DIALOG_RENAME &&
+        album_index < browser->albums.count) {
+        snprintf(browser->album_dialog_name,
+            sizeof(browser->album_dialog_name), "%s",
+            browser->albums.items[album_index].name);
+    } else {
+        browser->album_dialog_name[0] = '\0';
+    }
+    parent.w = browser->handle;
+    error = xwimp_get_window_state(&parent);
+    if (error != NULL) {
+        return error;
+    }
+    open.w = browser->album_dialog_handle;
+    open.visible.x0 = parent.visible.x0 +
+        (parent.visible.x1 - parent.visible.x0 - ALBUM_DIALOG_WIDTH) / 2;
+    open.visible.y0 = parent.visible.y0 +
+        (parent.visible.y1 - parent.visible.y0 - ALBUM_DIALOG_HEIGHT) / 2;
+    open.visible.x1 = open.visible.x0 + ALBUM_DIALOG_WIDTH;
+    open.visible.y1 = open.visible.y0 + ALBUM_DIALOG_HEIGHT;
+    open.xscroll = 0;
+    open.yscroll = 0;
+    open.next = wimp_TOP;
+    error = xwimp_open_window(&open);
+    if (error != NULL) {
+        return error;
+    }
+    (void) xwimp_set_icon_state(
+        browser->album_dialog_handle,
+        ALBUM_DIALOG_NAME,
+        0,
+        0
+    );
+    return xwimp_set_caret_position(
+        browser->album_dialog_handle,
+        ALBUM_DIALOG_NAME,
+        0,
+        0,
+        -1,
+        (int) strlen(browser->album_dialog_name)
+    );
+}
+
+static os_error *imgorg_browser_window_accept_album_dialog(
+    imgorg_browser_window *browser
+)
+{
+    size_t album_index;
+    os_error *error;
+
+    if (browser->album_dialog_name[0] == '\0') {
+        return imgorg_browser_window_error("Please enter an album name");
+    }
+    if (browser->album_dialog_mode == IMGORG_ALBUM_DIALOG_CREATE) {
+        if (!imgorg_album_list_add(
+                &browser->albums,
+                browser->album_dialog_name,
+                &album_index
+            )) {
+            return imgorg_browser_window_error(
+                "That album name is already in use"
+            );
+        }
+        browser->library_dirty = true;
+        error = imgorg_browser_window_add_selection_to_album(
+            browser,
+            album_index
+        );
+        if (error == NULL && browser->library_dirty) {
+            error = imgorg_browser_window_save_library(browser);
+        }
+    } else if (browser->album_dialog_mode == IMGORG_ALBUM_DIALOG_RENAME) {
+        album_index = browser->album_dialog_index;
+        if (!imgorg_album_list_rename(
+                &browser->albums,
+                album_index,
+                browser->album_dialog_name
+            )) {
+            return imgorg_browser_window_error(
+                "That album name is already in use"
+            );
+        }
+        browser->library_dirty = true;
+        error = imgorg_browser_window_save_library(browser);
+    } else {
+        return NULL;
+    }
+    if (error != NULL) {
+        return error;
+    }
+    browser->album_dialog_mode = IMGORG_ALBUM_DIALOG_NONE;
+    (void) xwimp_close_window(browser->album_dialog_handle);
+    return imgorg_browser_window_redraw_browser(browser);
+}
+
+os_error *imgorg_browser_window_handle_menu_selection(
+    imgorg_browser_window *browser,
+    const wimp_selection *selection,
+    bool *handled
+)
+{
+    size_t index;
+
+    if (handled != NULL) {
+        *handled = false;
+    }
+    if (browser == NULL || selection == NULL || handled == NULL ||
+        !browser->context_menu_open) {
+        return NULL;
+    }
+    browser->context_menu_open = false;
+    *handled = true;
+    if (browser->context_album_menu) {
+        size_t album_index = browser->context_album_index;
+
+        browser->context_album_menu = false;
+        if (album_index >= browser->albums.count) {
+            return NULL;
+        }
+        if (selection->items[0] == 0) {
+            return imgorg_browser_window_show_album_dialog(
+                browser,
+                IMGORG_ALBUM_DIALOG_RENAME,
+                album_index
+            );
+        }
+        if (selection->items[0] == 1) {
+            if (browser->filter_kind == IMGORG_LIBRARY_FILTER_ALBUM) {
+                if (browser->filter_album_index == album_index) {
+                    browser->filter_kind = IMGORG_LIBRARY_FILTER_ALL;
+                } else if (browser->filter_album_index > album_index) {
+                    --browser->filter_album_index;
+                }
+            }
+            (void) imgorg_album_list_remove_at(
+                &browser->albums,
+                album_index
+            );
+            browser->library_dirty = true;
+            if (imgorg_browser_window_save_library(browser) != NULL) {
+                return imgorg_browser_window_error(
+                    "The album could not be removed"
+                );
+            }
+            if (imgorg_browser_window_update_directory_extent(browser) !=
+                NULL) {
+                return imgorg_browser_window_error(
+                    "The album view could not be refreshed"
+                );
+            }
+            return imgorg_browser_window_redraw_browser(browser);
+        }
+        return NULL;
+    }
+    index = browser->context_image_index;
+    if (index >= browser->images.count) {
+        return NULL;
+    }
+    switch (selection->items[0]) {
+    case 0:
+        if (browser->images.items[index].format !=
+                IMGORG_IMAGE_FORMAT_PNG &&
+            browser->images.items[index].format !=
+                IMGORG_IMAGE_FORMAT_JPEG) {
+            return NULL;
+        }
+        return imgorg_browser_window_load_image_mode(
+            browser,
+            browser->images.items[index].path,
+            browser->images.items[index].format,
+            browser->handle
+        );
+
+    case 1:
+        if (selection->items[1] < 0) {
+            return NULL;
+        }
+        if ((size_t) selection->items[1] < browser->albums.count) {
+            return imgorg_browser_window_add_selection_to_album(
+                browser,
+                (size_t) selection->items[1]
+            );
+        }
+        if ((size_t) selection->items[1] == browser->albums.count) {
+            return imgorg_browser_window_show_album_dialog(
+                browser,
+                IMGORG_ALBUM_DIALOG_CREATE,
+                0
+            );
+        }
+        return NULL;
+
+    case 2:
+        for (index = browser->images.count; index > 0; --index) {
+            if (browser->images.items[index - 1].selected) {
+                os_error *error =
+                    imgorg_browser_window_remove_library_image(
+                        browser,
+                        index - 1
+                    );
+                if (error != NULL) {
+                    return error;
+                }
+            }
+        }
+        return NULL;
+
+    default:
+        return NULL;
+    }
+}
+
 os_error *imgorg_browser_window_handle_drag_end(
     imgorg_browser_window *browser,
     const wimp_dragged *dragged
@@ -2613,6 +4729,49 @@ os_error *imgorg_browser_window_handle_drag_end(
 
     if (browser == NULL || dragged == NULL) {
         return NULL;
+    }
+    if (browser->thumbnail_image_dragging) {
+        wimp_pointer pointer;
+        wimp_window_state state;
+        size_t album_index;
+        int y;
+        os_error *error;
+
+        browser->thumbnail_image_dragging = false;
+        error = xwimp_get_pointer_info(&pointer);
+        if (error != NULL || pointer.w != browser->handle) {
+            return error;
+        }
+        state.w = browser->handle;
+        error = xwimp_get_window_state(&state);
+        if (error != NULL ||
+            pointer.pos.x >=
+                state.visible.x0 + WORKSPACE_LEFT_PANEL_WIDTH) {
+            return error;
+        }
+        y = imgorg_browser_window_first_album_baseline(
+            browser,
+            state.visible.y1
+        );
+        for (album_index = 0;
+             album_index < browser->albums.count && album_index < 6;
+             ++album_index) {
+            if (pointer.pos.y >= y - 12 && pointer.pos.y < y + 24) {
+                return imgorg_browser_window_add_selection_to_album(
+                    browser,
+                    album_index
+                );
+            }
+            y -= 36;
+        }
+        return NULL;
+    }
+    if (browser->thumbnail_slider_dragging) {
+        browser->thumbnail_slider_dragging = false;
+        return imgorg_browser_window_set_thumbnail_width_from_pointer(
+            browser,
+            dragged->final.x0
+        );
     }
     for (viewer = browser->viewers; viewer != NULL; viewer = viewer->next) {
         if (viewer->dragging) {
@@ -2642,6 +4801,16 @@ os_error *imgorg_browser_window_handle_drag_update(
 
     if (browser == NULL) {
         return NULL;
+    }
+    if (browser->thumbnail_slider_dragging) {
+        error = xwimp_get_pointer_info(&pointer);
+        if (error != NULL) {
+            return error;
+        }
+        return imgorg_browser_window_set_thumbnail_width_from_pointer(
+            browser,
+            pointer.pos.x
+        );
     }
     for (viewer = browser->viewers; viewer != NULL; viewer = viewer->next) {
         if (viewer->dragging) {
@@ -2691,7 +4860,7 @@ os_error *imgorg_browser_window_handle_scroll(
         int minimum_scroll;
         int amount;
 
-        if (browser->directory_path[0] == '\0') {
+        if (browser->images.count == 0) {
             return NULL;
         }
 
@@ -2729,7 +4898,23 @@ os_error *imgorg_browser_window_handle_scroll(
             open.yscroll,
             visible_height
         );
-        return xwimp_open_window(&open);
+        {
+            os_error *error = xwimp_open_window(&open);
+
+            if (error == NULL && open.yscroll != scroll->yscroll) {
+                error = xwimp_force_redraw(
+                    browser->handle,
+                    open.xscroll + WORKSPACE_LEFT_PANEL_WIDTH,
+                    scroll->yscroll - WORKSPACE_HEADER_HEIGHT,
+                    open.xscroll +
+                        (open.visible.x1 - open.visible.x0) -
+                        WORKSPACE_RIGHT_PANEL_WIDTH,
+                    scroll->yscroll
+                );
+            }
+            return error == NULL ?
+                imgorg_browser_window_update_fixed_chrome(browser) : error;
+        }
     }
     viewer = imgorg_browser_window_find_viewer(browser, scroll->w);
     if (viewer == NULL || viewer->sprite_area == NULL) {
@@ -2764,6 +4949,31 @@ os_error *imgorg_browser_window_handle_scroll(
     );
 }
 
+static os_error *imgorg_browser_window_plot_toolbar(
+    const imgorg_viewer_window *viewer
+)
+{
+    int icon;
+    os_error *error = NULL;
+
+    if (!viewer->toolbar_visible) {
+        return NULL;
+    }
+    for (icon = 0;
+         icon < VIEWER_TOOLBAR_ICON_COUNT && error == NULL;
+         ++icon) {
+        wimp_icon_state state;
+
+        state.w = viewer->handle;
+        state.i = icon;
+        error = xwimp_get_icon_state(&state);
+        if (error == NULL) {
+            error = xwimp_plot_icon(&state.icon);
+        }
+    }
+    return error;
+}
+
 static os_error *imgorg_browser_window_plot_image(
     const imgorg_viewer_window *viewer,
     const wimp_draw *draw,
@@ -2774,17 +4984,25 @@ static os_error *imgorg_browser_window_plot_image(
     int y_eigen;
     int available_width;
     int available_height;
+    int content_y1;
     int target_width;
     int target_height;
     os_factors factors;
 
     imgorg_browser_window_read_eigen_factors(&x_eigen, &y_eigen);
+    content_y1 = draw->box.y1 -
+        (viewer->toolbar_visible ? VIEWER_TOOLBAR_HEIGHT : 0);
 
     if (viewer->fit_to_window) {
         available_width =
             (draw->box.x1 - draw->box.x0 - (2 * IMAGE_BORDER)) >> x_eigen;
         available_height =
-            (draw->box.y1 - draw->box.y0 - (2 * IMAGE_BORDER)) >> y_eigen;
+            (content_y1 - draw->box.y0 - (2 * IMAGE_BORDER)) >> y_eigen;
+
+        if (available_width <= 0 || available_height <= 0) {
+            memset(image_box, 0, sizeof(*image_box));
+            return NULL;
+        }
 
         if ((long long) available_width * viewer->image_height <=
             (long long) available_height * viewer->image_width) {
@@ -2823,7 +5041,7 @@ static os_error *imgorg_browser_window_plot_image(
         ((draw->box.x1 - draw->box.x0 -
           (target_width << x_eigen)) / 2) + viewer->pan_x;
     image_box->y0 = draw->box.y0 +
-        ((draw->box.y1 - draw->box.y0 -
+        ((content_y1 - draw->box.y0 -
           (target_height << y_eigen)) / 2) + viewer->pan_y;
     image_box->x1 = image_box->x0 + (target_width << x_eigen);
     image_box->y1 = image_box->y0 + (target_height << y_eigen);
@@ -2854,6 +5072,121 @@ static void imgorg_browser_window_fill_box(const os_box *box)
     );
 }
 
+static os_error *imgorg_browser_window_plot_panel(
+    const wimp_draw *draw,
+    const os_box *screen_box,
+    wimp_colour background,
+    int border_type,
+    bool filled
+)
+{
+    wimp_icon icon;
+    char *validation;
+    int origin_x = draw->box.x0 - draw->xscroll;
+    int origin_y = draw->box.y1 - draw->yscroll;
+
+    switch (border_type) {
+    case 1:
+        validation = IMGORG_BORDER_SLAB_OUT;
+        break;
+    case 2:
+        validation = IMGORG_BORDER_SLAB_IN;
+        break;
+    case 3:
+        validation = IMGORG_BORDER_RIDGE;
+        break;
+    default:
+        validation = (char *) -1;
+        break;
+    }
+    memset(&icon, 0, sizeof(icon));
+    icon.extent.x0 = screen_box->x0 - origin_x;
+    icon.extent.x1 = screen_box->x1 - origin_x;
+    icon.extent.y0 = screen_box->y0 - origin_y;
+    icon.extent.y1 = screen_box->y1 - origin_y;
+    icon.flags =
+        wimp_ICON_TEXT |
+        wimp_ICON_INDIRECTED |
+        (filled ? wimp_ICON_FILLED : 0) |
+        (border_type != 0 ? wimp_ICON_BORDER : 0) |
+        (wimp_BUTTON_NEVER << wimp_ICON_BUTTON_TYPE_SHIFT) |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (background << wimp_ICON_BG_COLOUR_SHIFT);
+    icon.data.indirected_text.text = IMGORG_EMPTY_ICON_TEXT;
+    icon.data.indirected_text.validation = validation;
+    icon.data.indirected_text.size = sizeof(IMGORG_EMPTY_ICON_TEXT);
+    return xwimp_plot_icon(&icon);
+}
+
+static os_error *imgorg_browser_window_plot_action_button(
+    const wimp_draw *draw,
+    const os_box *screen_box,
+    char *label,
+    bool selected
+)
+{
+    wimp_icon icon;
+    int origin_x = draw->box.x0 - draw->xscroll;
+    int origin_y = draw->box.y1 - draw->yscroll;
+
+    memset(&icon, 0, sizeof(icon));
+    icon.extent.x0 = screen_box->x0 - origin_x;
+    icon.extent.x1 = screen_box->x1 - origin_x;
+    icon.extent.y0 = screen_box->y0 - origin_y;
+    icon.extent.y1 = screen_box->y1 - origin_y;
+    icon.flags =
+        wimp_ICON_TEXT |
+        wimp_ICON_BORDER |
+        wimp_ICON_HCENTRED |
+        wimp_ICON_VCENTRED |
+        wimp_ICON_FILLED |
+        wimp_ICON_INDIRECTED |
+        (wimp_BUTTON_CLICK << wimp_ICON_BUTTON_TYPE_SHIFT) |
+        (selected ? wimp_ICON_SELECTED : 0) |
+        (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT) |
+        (wimp_COLOUR_VERY_LIGHT_GREY << wimp_ICON_BG_COLOUR_SHIFT);
+    icon.data.indirected_text.text = label;
+    icon.data.indirected_text.validation = IMGORG_BORDER_ACTION;
+    icon.data.indirected_text.size = strlen(label) + 1;
+    return xwimp_plot_icon(&icon);
+}
+
+static void imgorg_browser_window_inspector_rating_box(
+    const os_box *right,
+    int rating_baseline,
+    unsigned int rating,
+    os_box *box
+)
+{
+    box->x0 = right->x0 + WORKSPACE_PANEL_PADDING + 88 +
+        (int) (rating - 1) *
+        (INSPECTOR_RATING_BUTTON_WIDTH + INSPECTOR_RATING_BUTTON_GAP);
+    box->x1 = box->x0 + INSPECTOR_RATING_BUTTON_WIDTH;
+    box->y0 = rating_baseline - 12;
+    box->y1 = box->y0 + INSPECTOR_BUTTON_HEIGHT;
+}
+
+static void imgorg_browser_window_inspector_favourite_box(
+    const os_box *right,
+    int favourite_baseline,
+    os_box *box
+)
+{
+    box->x0 = right->x0 + WORKSPACE_PANEL_PADDING + 112;
+    box->x1 = right->x1 - WORKSPACE_PANEL_PADDING;
+    box->y0 = favourite_baseline - 12;
+    box->y1 = box->y0 + INSPECTOR_BUTTON_HEIGHT;
+}
+
+static bool imgorg_browser_window_point_in_box(
+    const os_coord *point,
+    const os_box *box
+)
+{
+    return point->x >= box->x0 && point->x < box->x1 &&
+        point->y >= box->y0 && point->y < box->y1;
+}
+
 static bool imgorg_browser_window_boxes_intersect(
     const os_box *first,
     const os_box *second
@@ -2876,28 +5209,6 @@ static const char *imgorg_browser_window_format_name(
         return "PNG";
     default:
         return "Image";
-    }
-}
-
-static void imgorg_browser_window_make_label(
-    char *label,
-    size_t label_size,
-    const char *leafname
-)
-{
-    enum { MAXIMUM_LABEL_CHARACTERS = 29 };
-    size_t length = strlen(leafname);
-
-    if (length <= MAXIMUM_LABEL_CHARACTERS) {
-        snprintf(label, label_size, "%s", leafname);
-    } else {
-        snprintf(
-            label,
-            label_size,
-            "%.*s...",
-            MAXIMUM_LABEL_CHARACTERS - 3,
-            leafname
-        );
     }
 }
 
@@ -2965,7 +5276,20 @@ static os_error *imgorg_browser_window_plot_directory(
 {
     int origin_x = draw->box.x0 - draw->xscroll;
     int origin_y = draw->box.y1 - draw->yscroll;
-    size_t index;
+    int cell_width = imgorg_browser_window_thumbnail_cell_width(browser);
+    int cell_height = imgorg_browser_window_thumbnail_cell_height(browser);
+    size_t columns = imgorg_browser_window_thumbnail_columns_for_width(
+        browser,
+        draw->box.x1 - draw->box.x0
+    );
+    int grid_x0 = imgorg_browser_window_thumbnail_grid_x0(
+        browser,
+        draw->box.x1 - draw->box.x0,
+        columns
+    );
+    size_t visible_count =
+        imgorg_browser_window_visible_image_count(browser);
+    size_t visible_index;
     os_error *error;
 
     error = xwimptextop_set_colour(os_COLOUR_BLACK, os_COLOUR_WHITE);
@@ -2973,51 +5297,46 @@ static os_error *imgorg_browser_window_plot_directory(
         return error;
     }
 
-    for (index = 0; index < browser->images.count; ++index) {
+    for (visible_index = 0;
+         visible_index < visible_count;
+         ++visible_index) {
+        size_t index = imgorg_browser_window_actual_image_index(
+            browser,
+            visible_index
+        );
         const imgorg_image_entry *entry =
             imgorg_image_list_get(&browser->images, index);
-        size_t row = index / THUMBNAIL_COLUMNS;
-        size_t column = index % THUMBNAIL_COLUMNS;
+        size_t row = visible_index / columns;
+        size_t column = visible_index % columns;
         os_box cell;
-        os_box inner;
         os_box preview;
-        char label[40];
 
-        cell.x0 = origin_x + THUMBNAIL_MARGIN + (int) column *
-            (THUMBNAIL_CELL_WIDTH + THUMBNAIL_GAP);
-        cell.x1 = cell.x0 + THUMBNAIL_CELL_WIDTH;
-        cell.y1 = origin_y - THUMBNAIL_MARGIN - (int) row *
-            (THUMBNAIL_CELL_HEIGHT + THUMBNAIL_GAP);
-        cell.y0 = cell.y1 - THUMBNAIL_CELL_HEIGHT;
+        cell.x0 = origin_x + grid_x0 + (int) column *
+            (cell_width + THUMBNAIL_GAP);
+        cell.x1 = cell.x0 + cell_width;
+        cell.y1 = origin_y - WORKSPACE_HEADER_HEIGHT - THUMBNAIL_MARGIN -
+            (int) row *
+            (cell_height + THUMBNAIL_GAP);
+        cell.y0 = cell.y1 - cell_height;
         if (!imgorg_browser_window_boxes_intersect(&cell, &draw->clip)) {
             continue;
         }
 
-        (void) colourtrans_set_gcol(
-            entry->selected ? os_COLOUR_LIGHT_BLUE :
-                os_COLOUR_MID_LIGHT_GREY,
-            0,
-            os_ACTION_OVERWRITE,
-            NULL
+        error = imgorg_browser_window_plot_panel(
+            draw,
+            &cell,
+            entry->selected ? wimp_COLOUR_LIGHT_BLUE :
+                wimp_COLOUR_VERY_LIGHT_GREY,
+            2,
+            entry->selected
         );
-        imgorg_browser_window_fill_box(&cell);
-
-        inner = cell;
-        inner.x0 += entry->selected ? 6 : 2;
-        inner.y0 += entry->selected ? 6 : 2;
-        inner.x1 -= entry->selected ? 6 : 2;
-        inner.y1 -= entry->selected ? 6 : 2;
-        (void) colourtrans_set_gcol(
-            os_COLOUR_WHITE,
-            0,
-            os_ACTION_OVERWRITE,
-            NULL
-        );
-        imgorg_browser_window_fill_box(&inner);
+        if (error != NULL) {
+            return error;
+        }
 
         preview.x0 = cell.x0 + THUMBNAIL_IMAGE_INSET;
         preview.x1 = cell.x1 - THUMBNAIL_IMAGE_INSET;
-        preview.y0 = cell.y0 + THUMBNAIL_LABEL_HEIGHT;
+        preview.y0 = cell.y0 + THUMBNAIL_IMAGE_INSET;
         preview.y1 = cell.y1 - THUMBNAIL_IMAGE_INSET;
         (void) colourtrans_set_gcol(
             os_COLOUR_VERY_LIGHT_GREY,
@@ -3045,22 +5364,611 @@ static os_error *imgorg_browser_window_plot_directory(
             return error;
         }
 
-        imgorg_browser_window_make_label(
-            label,
-            sizeof(label),
-            entry->leafname
+    }
+
+    return NULL;
+}
+
+static const imgorg_image_entry *imgorg_browser_window_selected_entry(
+    const imgorg_browser_window *browser
+)
+{
+    size_t index;
+
+    for (index = 0; index < browser->images.count; ++index) {
+        const imgorg_image_entry *entry =
+            imgorg_image_list_get(&browser->images, index);
+
+        if (entry->selected) {
+            return entry;
+        }
+    }
+    return NULL;
+}
+
+static os_error *imgorg_browser_window_paint_workspace_text(
+    const char *text,
+    int x,
+    int y
+)
+{
+    return xwimptextop_paint(0, text, x, y);
+}
+
+static os_error *imgorg_browser_window_plot_navigation_selection(
+    const wimp_draw *draw,
+    const os_box *left,
+    int baseline
+)
+{
+    os_box selection;
+
+    selection.x0 = left->x0 + 8;
+    selection.x1 = left->x1 - 8;
+    selection.y0 = baseline - 12;
+    selection.y1 = baseline + 28;
+    return imgorg_browser_window_plot_panel(
+        draw,
+        &selection,
+        wimp_COLOUR_CREAM,
+        2,
+        true
+    );
+}
+
+static os_error *imgorg_browser_window_plot_workspace_chrome(
+    const imgorg_browser_window *browser,
+    const wimp_draw *draw
+)
+{
+    const imgorg_image_entry *selected =
+        imgorg_browser_window_selected_entry(browser);
+    os_box left;
+    os_box right;
+    os_box header;
+    os_box slider_track;
+    os_box slider_knob;
+    os_error *error;
+    char line[64];
+    char filter_name[64];
+    int x;
+    int y;
+    size_t folder_index;
+    size_t visible_count =
+        imgorg_browser_window_visible_image_count(browser);
+
+    left.x0 = draw->box.x0;
+    left.y0 = draw->box.y0;
+    left.x1 = left.x0 + WORKSPACE_LEFT_PANEL_WIDTH;
+    left.y1 = draw->box.y1;
+    right.x0 = draw->box.x1 - WORKSPACE_RIGHT_PANEL_WIDTH;
+    right.y0 = draw->box.y0;
+    right.x1 = draw->box.x1;
+    right.y1 = draw->box.y1;
+    header.x0 = left.x1;
+    header.y0 = draw->box.y1 - WORKSPACE_HEADER_HEIGHT;
+    header.x1 = right.x0;
+    header.y1 = draw->box.y1;
+    imgorg_browser_window_thumbnail_slider_track(
+        &draw->box,
+        &slider_track
+    );
+    imgorg_browser_window_thumbnail_slider_knob(
+        browser,
+        &draw->box,
+        &slider_knob
+    );
+
+    error = imgorg_browser_window_plot_panel(
+        draw,
+        &left,
+        wimp_COLOUR_VERY_LIGHT_GREY,
+        3,
+        true
+    );
+    if (error == NULL) {
+        error = imgorg_browser_window_plot_panel(
+            draw,
+            &right,
+            wimp_COLOUR_VERY_LIGHT_GREY,
+            3,
+            true
         );
-        error = xwimptextop_paint(
-            0,
-            label,
-            cell.x0 + THUMBNAIL_IMAGE_INSET,
-            cell.y0 + 16
+    }
+    if (error == NULL) {
+        error = imgorg_browser_window_plot_panel(
+            draw,
+            &header,
+            wimp_COLOUR_LIGHT_GREY,
+            1,
+            true
+        );
+    }
+    if (error == NULL) {
+        error = imgorg_browser_window_plot_panel(
+            draw,
+            &slider_track,
+            wimp_COLOUR_MID_LIGHT_GREY,
+            2,
+            true
+        );
+    }
+    if (error == NULL) {
+        error = imgorg_browser_window_plot_panel(
+            draw,
+            &slider_knob,
+            wimp_COLOUR_LIGHT_GREY,
+            1,
+            true
+        );
+    }
+    if (error != NULL) {
+        return error;
+    }
+
+    error = xwimptextop_set_colour(
+        os_COLOUR_BLACK,
+        os_COLOUR_VERY_LIGHT_GREY
+    );
+    if (error != NULL) {
+        return error;
+    }
+
+    x = left.x0 + WORKSPACE_PANEL_PADDING;
+    y = left.y1 - 36;
+    error = imgorg_browser_window_paint_workspace_text("LIBRARY", x, y);
+    if (error != NULL) {
+        return error;
+    }
+    y -= 52;
+    if (browser->filter_kind == IMGORG_LIBRARY_FILTER_ALL) {
+        error = imgorg_browser_window_plot_navigation_selection(
+            draw,
+            &left,
+            y
         );
         if (error != NULL) {
             return error;
         }
     }
+    error = imgorg_browser_window_paint_workspace_text(
+        "All photographs",
+        x,
+        y
+    );
+    if (error != NULL) {
+        return error;
+    }
+    y -= 48;
+    error = imgorg_browser_window_paint_workspace_text("FOLDERS", x, y);
+    if (error != NULL) {
+        return error;
+    }
+    y -= 44;
+    if (browser->folders.count == 0) {
+        error = imgorg_browser_window_paint_workspace_text(
+            "No folders added",
+            x + 12,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        y -= 36;
+    } else {
+        for (folder_index = 0;
+             folder_index < browser->folders.count && folder_index < 6;
+             ++folder_index) {
+            char folder_name[IMGORG_LEAFNAME_CAPACITY];
 
+            imgorg_browser_window_copy_leafname(
+                folder_name,
+                sizeof(folder_name),
+                browser->folders.items[folder_index]
+            );
+            snprintf(line, sizeof(line), "%.25s", folder_name);
+            if (browser->filter_kind == IMGORG_LIBRARY_FILTER_FOLDER &&
+                browser->filter_folder_index == folder_index) {
+                error = imgorg_browser_window_plot_navigation_selection(
+                    draw,
+                    &left,
+                    y
+                );
+                if (error != NULL) {
+                    return error;
+                }
+            }
+            error = imgorg_browser_window_paint_workspace_text(
+                line,
+                x + 12,
+                y
+            );
+            if (error != NULL) {
+                return error;
+            }
+            y -= 36;
+        }
+        if (browser->folders.count > 6) {
+            snprintf(
+                line,
+                sizeof(line),
+                "+ %lu more",
+                (unsigned long) (browser->folders.count - 6)
+            );
+            error = imgorg_browser_window_paint_workspace_text(
+                line,
+                x + 12,
+                y
+            );
+            if (error != NULL) {
+                return error;
+            }
+            y -= 36;
+        }
+    }
+    if (browser->images.count > 0) {
+        snprintf(
+            line,
+            sizeof(line),
+            "%lu photograph%s",
+            (unsigned long) browser->images.count,
+            browser->images.count == 1 ? "" : "s"
+        );
+        error = imgorg_browser_window_paint_workspace_text(
+            line,
+            x + 12,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        y -= 36;
+    }
+    y -= 28;
+    error = imgorg_browser_window_paint_workspace_text("ORGANISE", x, y);
+    if (error != NULL) {
+        return error;
+    }
+    y -= 44;
+    {
+        unsigned int rating;
+
+        for (rating = 1; rating <= 5; ++rating) {
+            if (browser->filter_kind == IMGORG_LIBRARY_FILTER_RATING &&
+                browser->filter_rating == rating) {
+                error = imgorg_browser_window_plot_navigation_selection(
+                    draw,
+                    &left,
+                    y
+                );
+                if (error != NULL) {
+                    return error;
+                }
+            }
+            snprintf(
+                line,
+                sizeof(line),
+                rating == 1 ? "%u star" : "%u stars",
+                rating
+            );
+            error = imgorg_browser_window_paint_workspace_text(
+                line,
+                x + 12,
+                y
+            );
+            if (error != NULL) {
+                return error;
+            }
+            y -= 36;
+        }
+    }
+    if (browser->filter_kind == IMGORG_LIBRARY_FILTER_FAVOURITES) {
+        error = imgorg_browser_window_plot_navigation_selection(
+            draw,
+            &left,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+    }
+    error = imgorg_browser_window_paint_workspace_text(
+        "Favourites",
+        x + 12,
+        y
+    );
+    if (error != NULL) {
+        return error;
+    }
+    y -= 36;
+    error = imgorg_browser_window_paint_workspace_text(
+        "Tags (soon)",
+        x + 12,
+        y
+    );
+    if (error != NULL) {
+        return error;
+    }
+    y -= 52;
+    error = imgorg_browser_window_paint_workspace_text("ALBUMS", x, y);
+    if (error != NULL) {
+        return error;
+    }
+    y -= 44;
+    if (browser->albums.count == 0) {
+        error = imgorg_browser_window_paint_workspace_text(
+            "No albums",
+            x + 12,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+    } else {
+        size_t album_index;
+        size_t album_count =
+            browser->albums.count < 6 ? browser->albums.count : 6;
+
+        for (album_index = 0; album_index < album_count; ++album_index) {
+            if (browser->filter_kind == IMGORG_LIBRARY_FILTER_ALBUM &&
+                browser->filter_album_index == album_index) {
+                error = imgorg_browser_window_plot_navigation_selection(
+                    draw,
+                    &left,
+                    y
+                );
+                if (error != NULL) {
+                    return error;
+                }
+            }
+            snprintf(line, sizeof(line), "%.22s",
+                browser->albums.items[album_index].name);
+            error = imgorg_browser_window_paint_workspace_text(
+                line,
+                x + 12,
+                y
+            );
+            if (error != NULL) {
+                return error;
+            }
+            y -= 36;
+        }
+    }
+
+    error = xwimptextop_set_colour(os_COLOUR_BLACK, os_COLOUR_LIGHT_GREY);
+    if (error != NULL) {
+        return error;
+    }
+    error = imgorg_browser_window_paint_workspace_text(
+        "Thumbnail Size",
+        slider_track.x0 - 208,
+        header.y0 + 22
+    );
+    if (error != NULL) {
+        return error;
+    }
+    switch (browser->filter_kind) {
+    case IMGORG_LIBRARY_FILTER_FOLDER:
+        if (browser->filter_folder_index < browser->folders.count) {
+            imgorg_browser_window_copy_leafname(
+                filter_name,
+                sizeof(filter_name),
+                browser->folders.items[browser->filter_folder_index]
+            );
+        } else {
+            snprintf(filter_name, sizeof(filter_name), "Folder");
+        }
+        break;
+
+    case IMGORG_LIBRARY_FILTER_RATING:
+        snprintf(
+            filter_name,
+            sizeof(filter_name),
+            browser->filter_rating == 1 ?
+                "1-star photographs" : "%u-star photographs",
+            browser->filter_rating
+        );
+        break;
+
+    case IMGORG_LIBRARY_FILTER_FAVOURITES:
+        snprintf(filter_name, sizeof(filter_name), "Favourites");
+        break;
+
+    case IMGORG_LIBRARY_FILTER_ALBUM:
+        if (browser->filter_album_index < browser->albums.count) {
+            snprintf(filter_name, sizeof(filter_name), "%s",
+                browser->albums.items[browser->filter_album_index].name);
+        } else {
+            snprintf(filter_name, sizeof(filter_name), "Album");
+        }
+        break;
+
+    case IMGORG_LIBRARY_FILTER_ALL:
+    default:
+        snprintf(filter_name, sizeof(filter_name), "All photographs");
+        break;
+    }
+    snprintf(
+        line,
+        sizeof(line),
+        "%.24s - %lu",
+        filter_name,
+        (unsigned long) visible_count
+    );
+    error = imgorg_browser_window_paint_workspace_text(
+        line,
+        header.x0 + WORKSPACE_PANEL_PADDING,
+        header.y0 + 22
+    );
+    if (error != NULL) {
+        return error;
+    }
+
+    error = xwimptextop_set_colour(
+        os_COLOUR_BLACK,
+        os_COLOUR_VERY_LIGHT_GREY
+    );
+    if (error != NULL) {
+        return error;
+    }
+    x = right.x0 + WORKSPACE_PANEL_PADDING;
+    y = right.y1 - 36;
+    error = imgorg_browser_window_paint_workspace_text("INSPECTOR", x, y);
+    if (error != NULL) {
+        return error;
+    }
+    y -= 52;
+    if (selected == NULL) {
+        error = imgorg_browser_window_paint_workspace_text(
+            "Select a thumbnail",
+            x,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        y -= 36;
+        error = imgorg_browser_window_paint_workspace_text(
+            "to inspect it",
+            x,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+    } else {
+        snprintf(line, sizeof(line), "%.24s", selected->leafname);
+        error = imgorg_browser_window_paint_workspace_text(line, x, y);
+        if (error != NULL) {
+            return error;
+        }
+        y -= 44;
+        snprintf(
+            line,
+            sizeof(line),
+            "Format: %s",
+            imgorg_browser_window_format_name(selected->format)
+        );
+        error = imgorg_browser_window_paint_workspace_text(line, x, y);
+        if (error != NULL) {
+            return error;
+        }
+        y -= 36;
+        snprintf(
+            line,
+            sizeof(line),
+            "Size: %lu KB",
+            (unsigned long) ((selected->size_bytes + 1023) / 1024)
+        );
+        error = imgorg_browser_window_paint_workspace_text(line, x, y);
+        if (error != NULL) {
+            return error;
+        }
+        y -= 36;
+        snprintf(
+            line,
+            sizeof(line),
+            "Filetype: &%03lX",
+            (unsigned long) selected->riscos_filetype
+        );
+        error = imgorg_browser_window_paint_workspace_text(line, x, y);
+        if (error != NULL) {
+            return error;
+        }
+        y -= 64;
+        error = imgorg_browser_window_paint_workspace_text(
+            "ORGANISATION",
+            x,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        y -= 44;
+        error = imgorg_browser_window_paint_workspace_text("Rating:", x, y);
+        if (error != NULL) {
+            return error;
+        }
+        {
+            unsigned int rating;
+
+            for (rating = 1; rating <= 5; ++rating) {
+                os_box button;
+
+                imgorg_browser_window_inspector_rating_box(
+                    &right,
+                    y,
+                    rating,
+                    &button
+                );
+                error = imgorg_browser_window_plot_action_button(
+                    draw,
+                    &button,
+                    IMGORG_RATING_LABELS[rating - 1],
+                    rating <= selected->rating
+                );
+                if (error != NULL) {
+                    return error;
+                }
+            }
+        }
+        y -= 60;
+        error = imgorg_browser_window_paint_workspace_text(
+            "Favourite:",
+            x,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        {
+            os_box button;
+
+            imgorg_browser_window_inspector_favourite_box(
+                &right,
+                y,
+                &button
+            );
+            error = imgorg_browser_window_plot_action_button(
+                draw,
+                &button,
+                selected->favourite ?
+                    IMGORG_FAVOURITE_REMOVE_LABEL :
+                    IMGORG_FAVOURITE_ADD_LABEL,
+                selected->favourite
+            );
+            if (error != NULL) {
+                return error;
+            }
+        }
+    }
+
+    if (visible_count == 0) {
+        int centre_x = header.x0 + WORKSPACE_PANEL_PADDING + 48;
+        int centre_y = draw->box.y1 - WORKSPACE_HEADER_HEIGHT - 128;
+
+        error = xwimptextop_set_colour(os_COLOUR_BLACK, os_COLOUR_WHITE);
+        if (error != NULL) {
+            return error;
+        }
+        error = imgorg_browser_window_paint_workspace_text(
+            browser->images.count == 0 ?
+                "Drop folders or images here to add them to your library" :
+                "No photographs match this library view",
+            centre_x,
+            centre_y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        return imgorg_browser_window_paint_workspace_text(
+            browser->images.count == 0 ?
+                "They will remain available the next time Focal starts" :
+                "Choose another section from the Library panel",
+            centre_x,
+            centre_y - 52
+        );
+    }
     return NULL;
 }
 
@@ -3105,16 +6013,26 @@ static os_error *imgorg_browser_window_update_drag(
     const imgorg_viewer_window *viewer
 )
 {
+    wimp_window_state state;
     wimp_draw update;
     osbool more;
     os_error *error;
+    int width;
+    int height;
 
+    state.w = viewer->handle;
+    error = xwimp_get_window_state(&state);
+    if (error != NULL) {
+        return error;
+    }
+    width = state.visible.x1 - state.visible.x0;
+    height = state.visible.y1 - state.visible.y0;
     memset(&update, 0, sizeof(update));
     update.w = viewer->handle;
-    update.box.x0 = 0;
-    update.box.y0 = -2048;
-    update.box.x1 = 2048;
-    update.box.y1 = 0;
+    update.box.x0 = state.xscroll;
+    update.box.y0 = state.yscroll - height;
+    update.box.x1 = state.xscroll + width;
+    update.box.y1 = state.yscroll;
 
     error = xwimp_update_window(&update, &more);
     while (error == NULL && more) {
@@ -3126,6 +6044,9 @@ static os_error *imgorg_browser_window_update_drag(
                 &update.box,
                 &image_box
             );
+            error = imgorg_browser_window_plot_toolbar(viewer);
+        }
+        if (error == NULL) {
             error = xwimp_get_rectangle(&update, &more);
         }
     }
@@ -3167,9 +6088,19 @@ os_error *imgorg_browser_window_redraw(
                 redraw,
                 &image_box
             );
-        } else if (redraw->w == browser->handle &&
-            browser->directory_path[0] != '\0') {
-            error = imgorg_browser_window_plot_directory(browser, redraw);
+            if (error == NULL) {
+                error = imgorg_browser_window_plot_toolbar(viewer);
+            }
+        } else if (redraw->w == browser->handle) {
+            if (browser->images.count > 0) {
+                error = imgorg_browser_window_plot_directory(browser, redraw);
+            }
+            if (error == NULL) {
+                error = imgorg_browser_window_plot_workspace_chrome(
+                    browser,
+                    redraw
+                );
+            }
         } else {
             int origin_x = redraw->box.x0 - redraw->xscroll;
             int origin_y = redraw->box.y1 - redraw->yscroll;
@@ -3197,11 +6128,19 @@ void imgorg_browser_window_destroy(imgorg_browser_window *browser)
     if (browser == NULL) {
         return;
     }
+    if (browser->library_dirty) {
+        (void) imgorg_browser_window_save_library(browser);
+    }
 
     if (browser->loading_created) {
         (void) xwimp_delete_window(browser->loading_handle);
         browser->loading_handle = 0;
         browser->loading_created = false;
+    }
+    if (browser->album_dialog_created) {
+        (void) xwimp_delete_window(browser->album_dialog_handle);
+        browser->album_dialog_handle = 0;
+        browser->album_dialog_created = false;
     }
 
     if (browser->created) {
@@ -3219,7 +6158,11 @@ void imgorg_browser_window_destroy(imgorg_browser_window *browser)
         free(viewer);
     }
     imgorg_browser_window_clear_thumbnails(browser);
+    imgorg_folder_list_destroy(&browser->folders);
+    imgorg_album_list_destroy(&browser->albums);
     imgorg_image_list_destroy(&browser->images);
+    free(imgorg_album_submenu);
+    imgorg_album_submenu = NULL;
     imgorg_directory_scanner_init(&browser->scanner);
     browser->viewer_image_bytes = 0;
     browser->created = false;

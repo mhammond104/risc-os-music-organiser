@@ -7,6 +7,7 @@
 
 #define IMGORG_LEAFNAME_CAPACITY 256
 #define IMGORG_PATH_CAPACITY 1024
+#define IMGORG_TAGS_CAPACITY 256
 
 typedef enum imgorg_image_format {
     IMGORG_IMAGE_FORMAT_UNKNOWN = 0,
@@ -23,6 +24,9 @@ typedef struct imgorg_image_entry {
     uint32_t exec_addr;
     uint32_t riscos_filetype;
     imgorg_image_format format;
+    unsigned int rating;
+    bool favourite;
+    char tags[IMGORG_TAGS_CAPACITY];
     bool selected;
 } imgorg_image_entry;
 

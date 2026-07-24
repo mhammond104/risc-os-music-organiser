@@ -18,8 +18,21 @@ bool imgorg_image_list_append(
     imgorg_image_list *list,
     const imgorg_image_entry *entry
 );
+bool imgorg_image_list_append_unique(
+    imgorg_image_list *list,
+    const imgorg_image_entry *entry,
+    bool *added
+);
+size_t imgorg_image_list_find_path(
+    const imgorg_image_list *list,
+    const char *path
+);
 const imgorg_image_entry *imgorg_image_list_get(
     const imgorg_image_list *list,
+    size_t index
+);
+bool imgorg_image_list_remove_at(
+    imgorg_image_list *list,
     size_t index
 );
 void imgorg_image_list_clear(imgorg_image_list *list);

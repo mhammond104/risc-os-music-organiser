@@ -9,16 +9,18 @@ internal static class DeployRpcEmu
         @"D:\src\risc-os-image-organiser";
 
     private const string DestinationDirectory =
-        @"D:\src\RPCEmu - Direct\hostfs\src\!ImgOrg";
+        @"D:\src\RPCEmu - Direct\hostfs\Martin's Apps\!Focal";
 
     private static readonly string[,] Files =
     {
         { @"build\riscos\RunImage.aif", "!RunImage,ff8" },
-        { @"app\!ImgOrg\!Boot", "!Boot,feb" },
-        { @"app\!ImgOrg\!Run", "!Run,feb" },
-        { @"app\!ImgOrg\!Sprites", "!Sprites,ff9" },
-        { @"app\!ImgOrg\!Sprites22", "!Sprites22,ff9" },
-        { @"app\!ImgOrg\!Sprites11", "!Sprites11,ff9" }
+        { @"app\!Focal\!Boot", "!Boot,feb" },
+        { @"app\!Focal\!Run", "!Run,feb" },
+        { @"app\!Focal\!Sprites", "!Sprites,ff9" },
+        { @"app\!Focal\!Sprites22", "!Sprites22,ff9" },
+        { @"app\!Focal\!Sprites11", "!Sprites11,ff9" },
+        { @"app\!Focal\Messages", "Messages,fff" },
+        { @"app\!Focal\README", "README,fff" }
     };
 
     [STAThread]
@@ -34,8 +36,8 @@ internal static class DeployRpcEmu
             if (!quiet)
             {
                 MessageBox.Show(
-                    "The Image Organiser application was copied to RPCEmu HostFS successfully.",
-                    "Image Organiser deployment",
+                    "The Focal application was copied to RPCEmu HostFS successfully.",
+                    "Focal deployment",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information
                 );
@@ -49,7 +51,7 @@ internal static class DeployRpcEmu
             {
                 MessageBox.Show(
                     error.Message,
-                    "Image Organiser deployment failed",
+                    "Focal deployment failed",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Error
                 );

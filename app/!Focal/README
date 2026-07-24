@@ -1,0 +1,12 @@
+Focal
+=====
+
+Focal is a library and image-viewing application for RISC OS.
+
+Click its iconbar icon to open the library. Drag an image to the iconbar icon
+to open it directly in a viewer, or add folders to the persistent library from
+the library window.
+
+Double-click a library thumbnail to open it in a viewer. Use the viewer toolbar
+or keyboard controls to navigate, fit the image to the window, display it at
+100%, enter full-screen mode, or hide the toolbar.

@@ -58,7 +58,7 @@ static bool imgorg_thumbnail_cache_path(
     int written = snprintf(
         path,
         path_size,
-        "<Choices$Write>.ImgOrg.Thumbs.%08lX.%08lX",
+        "<Choices$Write>.Focal.Thumbs.%08lX.%08lX",
         (unsigned long) (hash >> 32),
         (unsigned long) (hash & UINT32_MAX)
     );
@@ -163,12 +163,12 @@ bool imgorg_thumbnail_cache_save(
         return false;
     }
 
-    (void) xosfile_create_dir("<Choices$Write>.ImgOrg", 0);
-    (void) xosfile_create_dir("<Choices$Write>.ImgOrg.Thumbs", 0);
+    (void) xosfile_create_dir("<Choices$Write>.Focal", 0);
+    (void) xosfile_create_dir("<Choices$Write>.Focal.Thumbs", 0);
     bucket_length = snprintf(
         bucket,
         sizeof(bucket),
-        "<Choices$Write>.ImgOrg.Thumbs.%08lX",
+        "<Choices$Write>.Focal.Thumbs.%08lX",
         (unsigned long) (hash >> 32)
     );
     if (bucket_length < 0 || (size_t) bucket_length >= sizeof(bucket)) {

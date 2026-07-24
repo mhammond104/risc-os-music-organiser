@@ -8,7 +8,7 @@ LDLIBS ?= -lpng16 -ljpeg -lz -lOSLib32
 BUILD_DIR := build/riscos
 ELF_TARGET := $(BUILD_DIR)/RunImage.elf
 AIF_TARGET := $(BUILD_DIR)/RunImage.aif
-TARGET := app/!ImgOrg/!RunImage
+TARGET := app/!Focal/!RunImage
 
 SOURCES := \
 	src/main.c \
@@ -17,6 +17,7 @@ SOURCES := \
 	src/directory_scanner.c \
 	src/image_entry.c \
 	src/image_list.c \
+	src/library_catalog.c \
 	src/thumbnail_cache.c
 
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
@@ -41,7 +42,7 @@ $(BUILD_DIR)/%.o: src/%.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 package: all
-	@echo "Built RISC OS application directory: app/!ImgOrg"
+	@echo "Built RISC OS application directory: app/!Focal"
 
 clean:
 	rm -rf build

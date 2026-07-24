@@ -30,17 +30,33 @@
 - [x] open PNG and JPEG thumbnails in the viewer
 - [x] fit-to-window mode
 - [x] zoom and pan
+- [x] hideable viewer toolbar and keyboard shortcuts
+- [x] centred unconstrained viewer windows and fullscreen toggle
 - [ ] remove viewer scroll bars; panning provides navigation within zoomed images
-- [ ] previous/next navigation
+- [x] previous/next navigation
 - [ ] rotate for display
 - [ ] reveal in Filer
 
 ## 0.4 — organisation
 
-- star ratings
-- favourites
-- tags
-- saved collections
+- [x] three-pane library workspace shell
+- [x] persistent library catalogue
+- [x] add folders and individual images through Filer drag-and-drop
+- [x] catalogue fields reserved for ratings, favourites and tags
+- [x] theme-aware bevelled workspace presentation
+- [x] star ratings
+- [x] favourites
+- [x] library and folder navigation filters
+- [x] exact 1–5-star navigation filters
+- [x] thumbnail context menu and catalogue-only removal
+- [x] unconstrained browser resizing with fixed scrolling side panels
+- [x] opaque fixed thumbnail-view header
+- [x] proportional centred initial library-window geometry
+- [x] responsive thumbnail columns and thumbnail-size slider
+- [x] Filer-style multiple thumbnail selection
+- [x] persistent albums with menu and drag-and-drop membership
+- [x] album navigation, creation, rename and removal
+- [ ] tags
 - catalogue search
 - catalogue backup and recovery
 

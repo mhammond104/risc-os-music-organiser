@@ -10,7 +10,7 @@
     (wimp_ICON_TEXT | (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT))
 
 static wimp_MENU(1) imgorg_iconbar_menu = {
-    {"ImgOrg"},
+    {"Focal"},
     wimp_COLOUR_BLACK,
     wimp_COLOUR_LIGHT_GREY,
     wimp_COLOUR_BLACK,
@@ -36,7 +36,7 @@ static os_error *imgorg_application_create_iconbar_icon(
     imgorg_application *application
 )
 {
-    static char icon_sprite[] = "!imgorg";
+    static char icon_sprite[] = "!focal";
     wimp_icon_create icon;
 
     memset(&icon, 0, sizeof(icon));
@@ -69,6 +69,7 @@ static os_error *imgorg_application_handle_mouse_click(
     if (pointer->w == wimp_ICON_BAR &&
         pointer->i == application->iconbar_icon) {
         if ((pointer->buttons & wimp_CLICK_MENU) != 0) {
+            application->browser.context_menu_open = false;
             return xwimp_create_menu(
                 (wimp_menu *) &imgorg_iconbar_menu,
                 pointer->pos.x,
@@ -106,8 +107,11 @@ static os_error *imgorg_application_handle_data_load(
     wimp_message_data_xfer *transfer = &message->data.data_xfer;
     fileswitch_object_type object_type;
     bits file_type;
+    bits load_addr;
+    bits exec_addr;
+    int size;
     os_error *error;
-    bool loaded_directory = false;
+    bool added_to_library = false;
 
     if (!((transfer->w == wimp_ICON_BAR &&
            transfer->i == application->iconbar_icon) ||
@@ -121,17 +125,28 @@ static os_error *imgorg_application_handle_data_load(
     error = xosfile_read_stamped(
         transfer->file_name,
         &object_type,
-        NULL,
-        NULL,
-        NULL,
+        &load_addr,
+        &exec_addr,
+        &size,
         NULL,
         &file_type
     );
     if (error == NULL && object_type == fileswitch_IS_DIR) {
-        loaded_directory = true;
+        added_to_library = true;
         error = imgorg_browser_window_load_directory(
             &application->browser,
             transfer->file_name
+        );
+    } else if (error == NULL &&
+               transfer->w == application->browser.handle) {
+        added_to_library = true;
+        error = imgorg_browser_window_add_image(
+            &application->browser,
+            transfer->file_name,
+            size < 0 ? 0 : (uint64_t) size,
+            load_addr,
+            exec_addr,
+            file_type
         );
     } else if (error == NULL) {
         error = imgorg_browser_window_load_image_into(
@@ -145,7 +160,7 @@ static os_error *imgorg_application_handle_data_load(
         (void) wimp_report_error(
             error,
             wimp_ERROR_BOX_OK_ICON,
-            "Image Organiser"
+            "Focal"
         );
         return NULL;
     }
@@ -161,7 +176,7 @@ static os_error *imgorg_application_handle_data_load(
         return error;
     }
 
-    return loaded_directory ?
+    return added_to_library ?
         imgorg_browser_window_open(&application->browser) : NULL;
 }
 
@@ -178,7 +193,7 @@ os_error *imgorg_application_initialise(imgorg_application *application)
 
     error = xwimp_initialise(
         wimp_VERSION_RO3,
-        "Image Organiser",
+        "Focal",
         (wimp_message_list *) &imgorg_messages,
         NULL,
         &application->task_handle
@@ -286,7 +301,7 @@ os_error *imgorg_application_run(imgorg_application *application)
                 (void) wimp_report_error(
                     error,
                     wimp_ERROR_BOX_OK_ICON,
-                    "Image Organiser"
+                    "Focal"
                 );
                 error = NULL;
             }
@@ -306,11 +321,44 @@ os_error *imgorg_application_run(imgorg_application *application)
             );
             break;
 
+        case wimp_KEY_PRESSED:
+        {
+            bool handled = false;
+
+            error = imgorg_browser_window_handle_key(
+                &application->browser,
+                &block.key,
+                &handled
+            );
+            if (error == NULL && !handled) {
+                error = xwimp_process_key(block.key.c);
+            }
+            if (error != NULL) {
+                (void) wimp_report_error(
+                    error,
+                    wimp_ERROR_BOX_OK_ICON,
+                    "Focal"
+                );
+                error = NULL;
+            }
+            break;
+        }
+
         case wimp_MENU_SELECTION:
-            if (block.selection.items[0] == 0) {
+        {
+            bool handled = false;
+
+            error = imgorg_browser_window_handle_menu_selection(
+                &application->browser,
+                &block.selection,
+                &handled
+            );
+            if (error == NULL && !handled &&
+                block.selection.items[0] == 0) {
                 application->quit = true;
             }
             break;
+        }
 
         case wimp_USER_MESSAGE:
         case wimp_USER_MESSAGE_RECORDED:

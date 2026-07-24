@@ -1,6 +1,7 @@
 #include "imgorg/image_list.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 static bool imgorg_image_list_grow(imgorg_image_list *list)
 {
@@ -68,6 +69,46 @@ bool imgorg_image_list_append(
     return true;
 }
 
+size_t imgorg_image_list_find_path(
+    const imgorg_image_list *list,
+    const char *path
+)
+{
+    size_t index;
+
+    if (list == NULL || path == NULL) {
+        return SIZE_MAX;
+    }
+    for (index = 0; index < list->count; ++index) {
+        if (strcmp(list->items[index].path, path) == 0) {
+            return index;
+        }
+    }
+    return SIZE_MAX;
+}
+
+bool imgorg_image_list_append_unique(
+    imgorg_image_list *list,
+    const imgorg_image_entry *entry,
+    bool *added
+)
+{
+    if (added != NULL) {
+        *added = false;
+    }
+    if (list == NULL || entry == NULL || added == NULL) {
+        return false;
+    }
+    if (imgorg_image_list_find_path(list, entry->path) != SIZE_MAX) {
+        return true;
+    }
+    if (!imgorg_image_list_append(list, entry)) {
+        return false;
+    }
+    *added = true;
+    return true;
+}
+
 const imgorg_image_entry *imgorg_image_list_get(
     const imgorg_image_list *list,
     size_t index
@@ -78,6 +119,25 @@ const imgorg_image_entry *imgorg_image_list_get(
     }
 
     return &list->items[index];
+}
+
+bool imgorg_image_list_remove_at(
+    imgorg_image_list *list,
+    size_t index
+)
+{
+    if (list == NULL || index >= list->count) {
+        return false;
+    }
+    if (index + 1 < list->count) {
+        memmove(
+            &list->items[index],
+            &list->items[index + 1],
+            (list->count - index - 1) * sizeof(*list->items)
+        );
+    }
+    --list->count;
+    return true;
 }
 
 void imgorg_image_list_clear(imgorg_image_list *list)

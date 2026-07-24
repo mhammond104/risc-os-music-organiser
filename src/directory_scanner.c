@@ -177,13 +177,19 @@ os_error *imgorg_directory_scanner_step(
                     info->exec_addr,
                     info->file_type
                 )) {
-                if (!imgorg_image_list_append(images, &entry)) {
+                bool added;
+
+                if (!imgorg_image_list_append_unique(
+                        images,
+                        &entry,
+                        &added
+                    )) {
                     scanner->active = false;
                     return imgorg_directory_scanner_error(
                         "There is not enough memory for the directory listing"
                     );
                 }
-                *changed = true;
+                *changed = *changed || added;
             }
         }
 

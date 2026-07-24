@@ -7,7 +7,7 @@ using System.Text;
 
 internal static class BuildRiscosSprites
 {
-    private const string SpriteName = "!imgorg";
+    private const string SpriteName = "!focal";
 
     private static int Main(string[] args)
     {
@@ -51,7 +51,9 @@ internal static class BuildRiscosSprites
         using (BinaryWriter writer = new BinaryWriter(stream))
         {
             int imageBytes = width * height * 4;
-            int spriteBytes = 44 + imageBytes;
+            int maskRowBytes = ((width + 3) / 4) * 4;
+            int maskBytes = maskRowBytes * height;
+            int spriteBytes = 44 + imageBytes + maskBytes;
 
             writer.Write(1);
             writer.Write(16);
@@ -64,7 +66,7 @@ internal static class BuildRiscosSprites
             writer.Write(0);
             writer.Write(31);
             writer.Write(44);
-            writer.Write(44);
+            writer.Write(44 + imageBytes);
             writer.Write(NewStyleMode(xDpi, yDpi));
 
             for (int y = 0; y < height; ++y)
@@ -78,6 +80,15 @@ internal static class BuildRiscosSprites
                     writer.Write((byte) 0);
                 }
             }
+            for (int y = 0; y < height; ++y)
+            {
+                for (int x = 0; x < maskRowBytes; ++x)
+                {
+                    writer.Write(
+                        x < width ? resized.GetPixel(x, y).A : (byte) 0
+                    );
+                }
+            }
         }
     }
 
@@ -86,7 +97,7 @@ internal static class BuildRiscosSprites
         Bitmap result = new Bitmap(width, height, PixelFormat.Format32bppArgb);
         using (Graphics graphics = Graphics.FromImage(result))
         {
-            graphics.Clear(Color.Black);
+            graphics.Clear(Color.Transparent);
             graphics.CompositingMode = CompositingMode.SourceCopy;
             graphics.CompositingQuality = CompositingQuality.HighQuality;
             graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
@@ -106,7 +117,8 @@ internal static class BuildRiscosSprites
 
     private static uint NewStyleMode(int xDpi, int yDpi)
     {
-        return 1u |
+        return 0x80000000u |
+            1u |
             ((uint) xDpi << 1) |
             ((uint) yDpi << 14) |
             (6u << 27);

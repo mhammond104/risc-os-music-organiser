@@ -39,3 +39,24 @@
   replacement. Viewers are created on demand, with image-header preflight and
   tracked image and thumbnail memory preventing the 128 MB Wimp slot from being
   exceeded.
+- Per-viewer hideable toolbars with previous, next, actual-size and fit controls,
+  plus Left/Right navigation and a T toolbar shortcut.
+- Transparent camera-lens application artwork with resolution-specific native
+  RISC OS alpha-channel sprite files.
+
+### Changed
+
+- Renamed the application from Image Organiser / `!ImgOrg` to Focal / `!Focal`.
+- Three-pane main workspace with a library/organisation sidebar, responsive
+  central thumbnail canvas and live selected-file inspector.
+- Thumbnail grids now use as many centred columns as fit the browser width,
+  with a labelled header slider for interactively adjusting thumbnail size.
+- Browser scrolling and resizing now use targeted Wimp updates instead of
+  invalidating the entire workspace, substantially reducing redraw flicker.
+- Live viewer panning now redraws the complete visible window at every size,
+  including maximised and full-screen viewers.
+- Filer-style Adjust multi-selection, persistent Albums, album filtering,
+  Add-to-Album submenus, create/rename dialogues, album removal and
+  thumbnail-to-album dragging.
+- Thumbnail filenames have been removed from grid cells; file details remain
+  available in the Inspector.

@@ -40,6 +40,7 @@ bool imgorg_image_entry_init(
         return false;
     }
 
+    memset(entry, 0, sizeof(*entry));
     path_length = snprintf(entry->path, sizeof(entry->path), "%s", path);
     leafname_length = snprintf(
         entry->leafname,
@@ -51,7 +52,6 @@ bool imgorg_image_entry_init(
     if (path_length < 0 || (size_t) path_length >= sizeof(entry->path) ||
         leafname_length < 0 ||
         (size_t) leafname_length >= sizeof(entry->leafname)) {
-        memset(entry, 0, sizeof(*entry));
         return false;
     }
 
@@ -60,7 +60,5 @@ bool imgorg_image_entry_init(
     entry->exec_addr = exec_addr;
     entry->riscos_filetype = riscos_filetype & 0xFFFu;
     entry->format = imgorg_image_format_from_filetype(riscos_filetype);
-    entry->selected = false;
-
     return true;
 }

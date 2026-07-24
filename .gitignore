@@ -4,7 +4,7 @@ obj/
 *.o
 *.d
 *.zip
-app/!ImgOrg/!RunImage
+app/!Focal/!RunImage
 tools/bin/
 
 # Host-side test outputs

@@ -1,0 +1,4 @@
+Set Focal$Dir <Obey$Dir>
+IconSprites <Focal$Dir>.!Sprites
+WimpSlot -min 2048K -max 128M
+Run <Focal$Dir>.!RunImage
