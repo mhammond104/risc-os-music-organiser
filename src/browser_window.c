@@ -77,17 +77,22 @@ static char IMGORG_VIEWER_LEAVE_FULLSCREEN_LABEL[] = "Leave Full Screen";
 static char IMGORG_RATING_LABELS[5][2] = {"1", "2", "3", "4", "5"};
 static char IMGORG_FAVOURITE_ADD_LABEL[] = "Add";
 static char IMGORG_FAVOURITE_REMOVE_LABEL[] = "Remove";
+static char IMGORG_INSPECTOR_ADD_TAG_LABEL[] = "Add Tag";
 static char IMGORG_MENU_OPEN_LABEL[] = "Open";
 static char IMGORG_MENU_ADD_ALBUM_LABEL[] = "Add to Album...";
+static char IMGORG_MENU_ADD_TAG_LABEL[] = "Add Tag...";
+static char IMGORG_MENU_REMOVE_TAG_LABEL[] = "Remove Tag...";
 static char IMGORG_MENU_CREATE_ALBUM_LABEL[] = "Create New...";
 static char IMGORG_MENU_REMOVE_LABEL[] = "Remove from library";
 static char IMGORG_MENU_RENAME_ALBUM_LABEL[] = "Rename";
 static char IMGORG_MENU_REMOVE_ALBUM_LABEL[] = "Remove Album";
 static char IMGORG_ALBUM_DIALOG_CANCEL_LABEL[] = "Cancel";
 static char IMGORG_ALBUM_DIALOG_OK_LABEL[] = "OK";
-static wimp_MENU(3) imgorg_thumbnail_menu;
+static wimp_MENU(5) imgorg_thumbnail_menu;
 static wimp_MENU(2) imgorg_album_menu;
 static wimp_menu *imgorg_album_submenu;
+static wimp_menu *imgorg_add_tag_submenu;
+static wimp_menu *imgorg_remove_tag_submenu;
 static bool imgorg_thumbnail_menu_initialised;
 static bool imgorg_album_menu_initialised;
 
@@ -122,6 +127,76 @@ static os_error *imgorg_browser_window_plot_workspace_chrome(
 static os_error *imgorg_browser_window_accept_album_dialog(
     imgorg_browser_window *browser
 );
+static os_error *imgorg_browser_window_set_filter(
+    imgorg_browser_window *browser,
+    imgorg_library_filter_kind kind,
+    size_t value
+);
+static os_error *imgorg_browser_window_show_album_dialog(
+    imgorg_browser_window *browser,
+    imgorg_album_dialog_mode mode,
+    size_t album_index
+);
+
+static void imgorg_browser_window_collect_tags(
+    imgorg_browser_window *browser,
+    bool selected_only
+)
+{
+    char (*names)[IMGORG_TAG_NAME_CAPACITY] = selected_only ?
+        browser->selection_tag_names : browser->tag_names;
+    size_t *count = selected_only ?
+        &browser->selection_tag_count : &browser->tag_count;
+    size_t image_index;
+
+    *count = 0;
+    for (image_index = 0;
+         image_index < browser->images.count && *count < 64;
+         ++image_index) {
+        const imgorg_image_entry *entry = &browser->images.items[image_index];
+        const char *cursor = entry->tags;
+
+        if (selected_only && !entry->selected) {
+            continue;
+        }
+        while (*cursor != '\0' && *count < 64) {
+            const char *end = strchr(cursor, ',');
+            char tag[IMGORG_TAG_NAME_CAPACITY];
+            size_t length;
+            size_t existing;
+            bool duplicate = false;
+
+            if (end == NULL) {
+                end = cursor + strlen(cursor);
+            }
+            length = (size_t) (end - cursor);
+            if (length < sizeof(tag)) {
+                memcpy(tag, cursor, length);
+                tag[length] = '\0';
+                if (imgorg_tag_name_normalise(
+                        tag, sizeof(tag), tag)) {
+                    for (existing = 0; existing < *count; ++existing) {
+                        imgorg_image_entry probe;
+
+                        memset(&probe, 0, sizeof(probe));
+                        snprintf(probe.tags, sizeof(probe.tags), "%s",
+                            names[existing]);
+                        if (imgorg_image_entry_has_tag(&probe, tag)) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+                    if (!duplicate) {
+                        snprintf(names[*count], IMGORG_TAG_NAME_CAPACITY,
+                            "%s", tag);
+                        ++*count;
+                    }
+                }
+            }
+            cursor = *end == ',' ? end + 1 : end;
+        }
+    }
+}
 
 static void imgorg_browser_window_initialise_menu(
     wimp_menu *menu,
@@ -189,8 +264,45 @@ static wimp_menu *imgorg_browser_window_build_album_submenu(
     return imgorg_album_submenu;
 }
 
+static wimp_menu *imgorg_browser_window_build_tag_submenu(
+    wimp_menu **storage,
+    char names[][IMGORG_TAG_NAME_CAPACITY],
+    size_t count,
+    bool include_create
+)
+{
+    size_t menu_count = count + (include_create ? 1 : 0);
+    size_t index;
+
+    free(*storage);
+    *storage = NULL;
+    if (menu_count == 0) {
+        return NULL;
+    }
+    *storage = calloc(1, wimp_SIZEOF_MENU(menu_count));
+    if (*storage == NULL) {
+        return NULL;
+    }
+    imgorg_browser_window_initialise_menu(*storage, "Tags", 300);
+    for (index = 0; index < count; ++index) {
+        imgorg_browser_window_set_menu_entry(
+            &(*storage)->entries[index],
+            names[index],
+            (!include_create && index + 1 == count) ? wimp_MENU_LAST : 0
+        );
+    }
+    if (include_create) {
+        imgorg_browser_window_set_menu_entry(
+            &(*storage)->entries[count],
+            IMGORG_MENU_CREATE_ALBUM_LABEL,
+            wimp_MENU_LAST | (count > 0 ? wimp_MENU_SEPARATE : 0)
+        );
+    }
+    return *storage;
+}
+
 static wimp_menu *imgorg_browser_window_thumbnail_menu(
-    const imgorg_browser_window *browser
+    imgorg_browser_window *browser
 )
 {
     wimp_icon_flags item_flags =
@@ -214,12 +326,39 @@ static wimp_menu *imgorg_browser_window_thumbnail_menu(
             &imgorg_thumbnail_menu.entries[1],
             IMGORG_MENU_ADD_ALBUM_LABEL, 0);
         imgorg_browser_window_set_menu_entry(
-            &imgorg_thumbnail_menu.entries[2], IMGORG_MENU_REMOVE_LABEL,
+            &imgorg_thumbnail_menu.entries[2],
+            IMGORG_MENU_ADD_TAG_LABEL, 0);
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_thumbnail_menu.entries[3],
+            IMGORG_MENU_REMOVE_TAG_LABEL, 0);
+        imgorg_browser_window_set_menu_entry(
+            &imgorg_thumbnail_menu.entries[4], IMGORG_MENU_REMOVE_LABEL,
             wimp_MENU_LAST | wimp_MENU_SEPARATE);
         imgorg_thumbnail_menu_initialised = true;
     }
+    imgorg_browser_window_collect_tags(browser, false);
+    imgorg_browser_window_collect_tags(browser, true);
     imgorg_thumbnail_menu.entries[1].sub_menu =
         imgorg_browser_window_build_album_submenu(browser);
+    imgorg_thumbnail_menu.entries[2].sub_menu =
+        imgorg_browser_window_build_tag_submenu(
+            &imgorg_add_tag_submenu,
+            browser->tag_names,
+            browser->tag_count,
+            true
+        );
+    imgorg_thumbnail_menu.entries[3].sub_menu =
+        imgorg_browser_window_build_tag_submenu(
+            &imgorg_remove_tag_submenu,
+            browser->selection_tag_names,
+            browser->selection_tag_count,
+            false
+        );
+    if (browser->selection_tag_count == 0) {
+        imgorg_thumbnail_menu.entries[3].icon_flags |= wimp_ICON_SHADED;
+    } else {
+        imgorg_thumbnail_menu.entries[3].icon_flags &= ~wimp_ICON_SHADED;
+    }
     return (wimp_menu *) &imgorg_thumbnail_menu;
 }
 
@@ -431,6 +570,9 @@ static bool imgorg_browser_window_entry_matches_filter(
                 &browser->albums.items[browser->filter_album_index],
                 entry->path
             );
+
+    case IMGORG_LIBRARY_FILTER_TAG:
+        return imgorg_image_entry_has_tag(entry, browser->filter_tag);
 
     case IMGORG_LIBRARY_FILTER_ALL:
     default:
@@ -2580,6 +2722,10 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
 
     memset(browser, 0, sizeof(*browser));
     browser->thumbnail_cell_width = THUMBNAIL_DEFAULT_CELL_WIDTH;
+    snprintf(browser->album_dialog_title,
+        sizeof(browser->album_dialog_title), "Album");
+    snprintf(browser->album_dialog_label,
+        sizeof(browser->album_dialog_label), "Album name:");
     imgorg_image_list_init(&browser->images);
     imgorg_folder_list_init(&browser->folders);
     imgorg_album_list_init(&browser->albums);
@@ -2770,9 +2916,13 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     album_definition.extent.x1 = ALBUM_DIALOG_WIDTH;
     album_definition.extent.y1 = 0;
     album_definition.title_flags =
-        wimp_ICON_TEXT | wimp_ICON_HCENTRED | wimp_ICON_VCENTRED;
-    snprintf(album_definition.title_data.text,
-        sizeof(album_definition.title_data.text), "Album");
+        wimp_ICON_TEXT | wimp_ICON_HCENTRED | wimp_ICON_VCENTRED |
+        wimp_ICON_INDIRECTED;
+    album_definition.title_data.indirected_text.text =
+        browser->album_dialog_title;
+    album_definition.title_data.indirected_text.validation = (char *) -1;
+    album_definition.title_data.indirected_text.size =
+        sizeof(browser->album_dialog_title);
     album_definition.work_flags =
         wimp_BUTTON_NEVER << wimp_ICON_BUTTON_TYPE_SHIFT;
     album_definition.sprite_area = wimpspriteop_AREA;
@@ -2783,11 +2933,14 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     album_definition.icons[ALBUM_DIALOG_LABEL].extent =
         (os_box) {20, -72, 180, -24};
     album_definition.icons[ALBUM_DIALOG_LABEL].flags =
-        wimp_ICON_TEXT | wimp_ICON_VCENTRED |
+        wimp_ICON_TEXT | wimp_ICON_VCENTRED | wimp_ICON_INDIRECTED |
         (wimp_COLOUR_BLACK << wimp_ICON_FG_COLOUR_SHIFT);
-    snprintf(album_definition.icons[ALBUM_DIALOG_LABEL].data.text,
-        sizeof(album_definition.icons[ALBUM_DIALOG_LABEL].data.text),
-        "Album name:");
+    album_definition.icons[ALBUM_DIALOG_LABEL].data.indirected_text.text =
+        browser->album_dialog_label;
+    album_definition.icons[ALBUM_DIALOG_LABEL].
+        data.indirected_text.validation = (char *) -1;
+    album_definition.icons[ALBUM_DIALOG_LABEL].data.indirected_text.size =
+        sizeof(browser->album_dialog_label);
     album_definition.icons[ALBUM_DIALOG_NAME].extent =
         (os_box) {200, -72, 500, -24};
     album_definition.icons[ALBUM_DIALOG_NAME].flags =
@@ -3868,14 +4021,15 @@ static bool imgorg_browser_window_toggle_thumbnail(
     return true;
 }
 
-static int imgorg_browser_window_first_album_baseline(
-    const imgorg_browser_window *browser,
+static int imgorg_browser_window_first_tag_baseline(
+    imgorg_browser_window *browser,
     int visible_y1
 )
 {
     size_t folder_rows;
     int y = visible_y1 - 180;
 
+    imgorg_browser_window_collect_tags(browser, false);
     if (browser->folders.count == 0) {
         folder_rows = 1;
     } else {
@@ -3889,8 +4043,44 @@ static int imgorg_browser_window_first_album_baseline(
     if (browser->images.count > 0) {
         y -= 36;
     }
-    y -= 28 + 44 + 5 * 36 + 36 + 52 + 44;
+    y -= 28 + 44 + 5 * 36 + 52 + 44;
     return y;
+}
+
+static int imgorg_browser_window_first_album_baseline(
+    imgorg_browser_window *browser,
+    int visible_y1
+)
+{
+    size_t tag_rows;
+    int y = imgorg_browser_window_first_tag_baseline(browser, visible_y1);
+
+    tag_rows = browser->tag_count == 0 ? 1 :
+        (browser->tag_count < 5 ? browser->tag_count : 5);
+    if (browser->tag_count > 5) {
+        ++tag_rows;
+    }
+    y -= (int) tag_rows * 36;
+    y -= 52 + 44;
+    return y;
+}
+
+static os_error *imgorg_browser_window_set_tag_filter(
+    imgorg_browser_window *browser,
+    const char *tag
+)
+{
+    if (!imgorg_tag_name_normalise(
+            browser->filter_tag,
+            sizeof(browser->filter_tag),
+            tag)) {
+        return NULL;
+    }
+    return imgorg_browser_window_set_filter(
+        browser,
+        IMGORG_LIBRARY_FILTER_TAG,
+        0
+    );
 }
 
 static os_error *imgorg_browser_window_set_filter(
@@ -4030,10 +4220,12 @@ os_error *imgorg_browser_window_handle_pointer(
                 state.visible.x0 + WORKSPACE_LEFT_PANEL_WIDTH) {
             int y;
             int album_y;
+            int tag_y;
             size_t folder_count =
                 browser->folders.count < 6 ? browser->folders.count : 6;
             size_t folder_index;
             size_t album_index;
+            size_t tag_index;
 
             album_y = imgorg_browser_window_first_album_baseline(
                 browser,
@@ -4067,6 +4259,22 @@ os_error *imgorg_browser_window_handle_pointer(
             }
             if (pointer->buttons != wimp_SINGLE_SELECT) {
                 return NULL;
+            }
+            tag_y = imgorg_browser_window_first_tag_baseline(
+                browser,
+                state.visible.y1
+            );
+            for (tag_index = 0;
+                 tag_index < browser->tag_count && tag_index < 5;
+                 ++tag_index) {
+                if (pointer->pos.y >= tag_y - 12 &&
+                    pointer->pos.y < tag_y + 24) {
+                    return imgorg_browser_window_set_tag_filter(
+                        browser,
+                        browser->tag_names[tag_index]
+                    );
+                }
+                tag_y -= 36;
             }
             if (pointer->pos.y >= state.visible.y1 - 108 &&
                 pointer->pos.y < state.visible.y1 - 68) {
@@ -4204,6 +4412,21 @@ os_error *imgorg_browser_window_handle_pointer(
                 }
                 return error == NULL ?
                     imgorg_browser_window_redraw_browser(browser) : error;
+            }
+            imgorg_browser_window_inspector_favourite_box(
+                &right,
+                state.visible.y1 - 520,
+                &button
+            );
+            if (imgorg_browser_window_point_in_box(
+                    &pointer->pos,
+                    &button
+                )) {
+                return imgorg_browser_window_show_album_dialog(
+                    browser,
+                    IMGORG_ALBUM_DIALOG_CREATE_TAG,
+                    0
+                );
             }
             return NULL;
         }
@@ -4438,6 +4661,25 @@ static os_error *imgorg_browser_window_remove_library_image(
     }
     imgorg_album_list_remove_image(&browser->albums, removed_path);
     imgorg_browser_window_prune_empty_folders(browser);
+    if (browser->filter_kind == IMGORG_LIBRARY_FILTER_TAG) {
+        size_t image_index;
+        bool tag_still_used = false;
+
+        for (image_index = 0;
+             image_index < browser->images.count;
+             ++image_index) {
+            if (imgorg_image_entry_has_tag(
+                    &browser->images.items[image_index],
+                    browser->filter_tag)) {
+                tag_still_used = true;
+                break;
+            }
+        }
+        if (!tag_still_used) {
+            browser->filter_kind = IMGORG_LIBRARY_FILTER_ALL;
+            browser->filter_tag[0] = '\0';
+        }
+    }
     if (browser->thumbnail_cursor > index) {
         --browser->thumbnail_cursor;
     }
@@ -4493,6 +4735,71 @@ static os_error *imgorg_browser_window_add_selection_to_album(
     return imgorg_browser_window_save_library(browser);
 }
 
+static os_error *imgorg_browser_window_apply_tag_to_selection(
+    imgorg_browser_window *browser,
+    const char *tag,
+    bool remove
+)
+{
+    size_t index;
+    bool any_changed = false;
+
+    for (index = 0; index < browser->images.count; ++index) {
+        bool changed;
+        bool success;
+
+        if (!browser->images.items[index].selected) {
+            continue;
+        }
+        success = remove ?
+            imgorg_image_entry_remove_tag(
+                &browser->images.items[index], tag, &changed) :
+            imgorg_image_entry_add_tag(
+                &browser->images.items[index], tag, &changed);
+        if (!success) {
+            return imgorg_browser_window_error(
+                remove ?
+                    "The tag could not be removed" :
+                    "There is not enough room to add that tag"
+            );
+        }
+        any_changed = any_changed || changed;
+    }
+    if (!any_changed) {
+        return NULL;
+    }
+    browser->library_dirty = true;
+    if (imgorg_browser_window_save_library(browser) != NULL) {
+        return imgorg_browser_window_error(
+            "The tag changes could not be saved"
+        );
+    }
+    if (browser->filter_kind == IMGORG_LIBRARY_FILTER_TAG) {
+        bool filter_exists = false;
+        size_t index;
+
+        imgorg_browser_window_collect_tags(browser, false);
+        for (index = 0; index < browser->tag_count; ++index) {
+            imgorg_image_entry probe;
+
+            memset(&probe, 0, sizeof(probe));
+            snprintf(probe.tags, sizeof(probe.tags), "%s",
+                browser->tag_names[index]);
+            if (imgorg_image_entry_has_tag(
+                    &probe, browser->filter_tag)) {
+                filter_exists = true;
+                break;
+            }
+        }
+        if (!filter_exists) {
+            browser->filter_kind = IMGORG_LIBRARY_FILTER_ALL;
+            browser->filter_tag[0] = '\0';
+        }
+        (void) imgorg_browser_window_update_directory_extent(browser);
+    }
+    return imgorg_browser_window_redraw_browser(browser);
+}
+
 static os_error *imgorg_browser_window_show_album_dialog(
     imgorg_browser_window *browser,
     imgorg_album_dialog_mode mode,
@@ -4508,6 +4815,17 @@ static os_error *imgorg_browser_window_show_album_dialog(
     }
     browser->album_dialog_mode = mode;
     browser->album_dialog_index = album_index;
+    if (mode == IMGORG_ALBUM_DIALOG_CREATE_TAG) {
+        snprintf(browser->album_dialog_title,
+            sizeof(browser->album_dialog_title), "New Tag");
+        snprintf(browser->album_dialog_label,
+            sizeof(browser->album_dialog_label), "Tag name:");
+    } else {
+        snprintf(browser->album_dialog_title,
+            sizeof(browser->album_dialog_title), "Album");
+        snprintf(browser->album_dialog_label,
+            sizeof(browser->album_dialog_label), "Album name:");
+    }
     if (mode == IMGORG_ALBUM_DIALOG_RENAME &&
         album_index < browser->albums.count) {
         snprintf(browser->album_dialog_name,
@@ -4558,6 +4876,24 @@ static os_error *imgorg_browser_window_accept_album_dialog(
     size_t album_index;
     os_error *error;
 
+    if (browser->album_dialog_mode == IMGORG_ALBUM_DIALOG_CREATE_TAG) {
+        char tag[IMGORG_TAG_NAME_CAPACITY];
+
+        if (!imgorg_tag_name_normalise(
+                tag, sizeof(tag), browser->album_dialog_name)) {
+            return imgorg_browser_window_error(
+                "Please enter a tag name without commas"
+            );
+        }
+        error = imgorg_browser_window_apply_tag_to_selection(
+            browser, tag, false);
+        if (error != NULL) {
+            return error;
+        }
+        browser->album_dialog_mode = IMGORG_ALBUM_DIALOG_NONE;
+        (void) xwimp_close_window(browser->album_dialog_handle);
+        return imgorg_browser_window_redraw_browser(browser);
+    }
     if (browser->album_dialog_name[0] == '\0') {
         return imgorg_browser_window_error("Please enter an album name");
     }
@@ -4701,6 +5037,38 @@ os_error *imgorg_browser_window_handle_menu_selection(
         return NULL;
 
     case 2:
+        if (selection->items[1] < 0) {
+            return NULL;
+        }
+        if ((size_t) selection->items[1] < browser->tag_count) {
+            return imgorg_browser_window_apply_tag_to_selection(
+                browser,
+                browser->tag_names[selection->items[1]],
+                false
+            );
+        }
+        if ((size_t) selection->items[1] == browser->tag_count) {
+            return imgorg_browser_window_show_album_dialog(
+                browser,
+                IMGORG_ALBUM_DIALOG_CREATE_TAG,
+                0
+            );
+        }
+        return NULL;
+
+    case 3:
+        if (selection->items[1] < 0 ||
+            (size_t) selection->items[1] >=
+                browser->selection_tag_count) {
+            return NULL;
+        }
+        return imgorg_browser_window_apply_tag_to_selection(
+            browser,
+            browser->selection_tag_names[selection->items[1]],
+            true
+        );
+
+    case 4:
         for (index = browser->images.count; index > 0; --index) {
             if (browser->images.items[index - 1].selected) {
                 os_error *error =
@@ -5434,8 +5802,14 @@ static os_error *imgorg_browser_window_plot_workspace_chrome(
     int x;
     int y;
     size_t folder_index;
+    size_t tag_index;
     size_t visible_count =
         imgorg_browser_window_visible_image_count(browser);
+
+    imgorg_browser_window_collect_tags(
+        (imgorg_browser_window *) browser,
+        false
+    );
 
     left.x0 = draw->box.x0;
     left.y0 = draw->box.y0;
@@ -5680,14 +6054,66 @@ static os_error *imgorg_browser_window_plot_workspace_chrome(
     if (error != NULL) {
         return error;
     }
-    y -= 36;
+    y -= 52;
     error = imgorg_browser_window_paint_workspace_text(
-        "Tags (soon)",
-        x + 12,
+        "TAGS",
+        x,
         y
     );
     if (error != NULL) {
         return error;
+    }
+    y -= 44;
+    if (browser->tag_count == 0) {
+        error = imgorg_browser_window_paint_workspace_text(
+            "No tags",
+            x + 12,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        y -= 36;
+    } else {
+        size_t tag_count = browser->tag_count < 5 ?
+            browser->tag_count : 5;
+
+        for (tag_index = 0; tag_index < tag_count; ++tag_index) {
+            if (browser->filter_kind == IMGORG_LIBRARY_FILTER_TAG) {
+                imgorg_image_entry tag_entry;
+
+                memset(&tag_entry, 0, sizeof(tag_entry));
+                snprintf(tag_entry.tags, sizeof(tag_entry.tags), "%s",
+                    browser->tag_names[tag_index]);
+                if (imgorg_image_entry_has_tag(
+                        &tag_entry, browser->filter_tag)) {
+                    error =
+                        imgorg_browser_window_plot_navigation_selection(
+                            draw, &left, y);
+                    if (error != NULL) {
+                        return error;
+                    }
+                }
+            }
+            snprintf(line, sizeof(line), "%.22s",
+                browser->tag_names[tag_index]);
+            error = imgorg_browser_window_paint_workspace_text(
+                line, x + 12, y);
+            if (error != NULL) {
+                return error;
+            }
+            y -= 36;
+        }
+        if (browser->tag_count > 5) {
+            snprintf(line, sizeof(line), "+ %lu more",
+                (unsigned long) (browser->tag_count - 5));
+            error = imgorg_browser_window_paint_workspace_text(
+                line, x + 12, y);
+            if (error != NULL) {
+                return error;
+            }
+            y -= 36;
+        }
     }
     y -= 52;
     error = imgorg_browser_window_paint_workspace_text("ALBUMS", x, y);
@@ -5781,6 +6207,11 @@ static os_error *imgorg_browser_window_plot_workspace_chrome(
         } else {
             snprintf(filter_name, sizeof(filter_name), "Album");
         }
+        break;
+
+    case IMGORG_LIBRARY_FILTER_TAG:
+        snprintf(filter_name, sizeof(filter_name), "%s",
+            browser->filter_tag);
         break;
 
     case IMGORG_LIBRARY_FILTER_ALL:
@@ -5936,6 +6367,41 @@ static os_error *imgorg_browser_window_plot_workspace_chrome(
                     IMGORG_FAVOURITE_REMOVE_LABEL :
                     IMGORG_FAVOURITE_ADD_LABEL,
                 selected->favourite
+            );
+            if (error != NULL) {
+                return error;
+            }
+        }
+        y -= 60;
+        error = imgorg_browser_window_paint_workspace_text(
+            "Tags:",
+            x,
+            y
+        );
+        if (error != NULL) {
+            return error;
+        }
+        y -= 36;
+        snprintf(line, sizeof(line), "%.30s",
+            selected->tags[0] != '\0' ? selected->tags : "None");
+        error = imgorg_browser_window_paint_workspace_text(line, x, y);
+        if (error != NULL) {
+            return error;
+        }
+        y -= 52;
+        {
+            os_box button;
+
+            imgorg_browser_window_inspector_favourite_box(
+                &right,
+                y,
+                &button
+            );
+            error = imgorg_browser_window_plot_action_button(
+                draw,
+                &button,
+                IMGORG_INSPECTOR_ADD_TAG_LABEL,
+                false
             );
             if (error != NULL) {
                 return error;
@@ -6163,6 +6629,10 @@ void imgorg_browser_window_destroy(imgorg_browser_window *browser)
     imgorg_image_list_destroy(&browser->images);
     free(imgorg_album_submenu);
     imgorg_album_submenu = NULL;
+    free(imgorg_add_tag_submenu);
+    imgorg_add_tag_submenu = NULL;
+    free(imgorg_remove_tag_submenu);
+    imgorg_remove_tag_submenu = NULL;
     imgorg_directory_scanner_init(&browser->scanner);
     browser->viewer_image_bytes = 0;
     browser->created = false;

@@ -8,6 +8,7 @@
 #define IMGORG_LEAFNAME_CAPACITY 256
 #define IMGORG_PATH_CAPACITY 1024
 #define IMGORG_TAGS_CAPACITY 256
+#define IMGORG_TAG_NAME_CAPACITY 64
 
 typedef enum imgorg_image_format {
     IMGORG_IMAGE_FORMAT_UNKNOWN = 0,
@@ -39,6 +40,25 @@ bool imgorg_image_entry_init(
     uint32_t load_addr,
     uint32_t exec_addr,
     uint32_t riscos_filetype
+);
+bool imgorg_tag_name_normalise(
+    char *destination,
+    size_t capacity,
+    const char *source
+);
+bool imgorg_image_entry_has_tag(
+    const imgorg_image_entry *entry,
+    const char *tag
+);
+bool imgorg_image_entry_add_tag(
+    imgorg_image_entry *entry,
+    const char *tag,
+    bool *changed
+);
+bool imgorg_image_entry_remove_tag(
+    imgorg_image_entry *entry,
+    const char *tag,
+    bool *changed
 );
 
 #endif

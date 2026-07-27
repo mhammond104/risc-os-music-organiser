@@ -43,6 +43,10 @@
   plus Left/Right navigation and a T toolbar shortcut.
 - Transparent camera-lens application artwork with resolution-specific native
   RISC OS alpha-channel sprite files.
+- Persistent comma-separated photograph tags with normalized names,
+  multi-selection Add Tag and Remove Tag menus, tag creation dialogue,
+  Inspector display and controls, and clickable tag filters in the Library
+  sidebar.
 
 ### Changed
 

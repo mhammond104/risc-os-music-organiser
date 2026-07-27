@@ -75,6 +75,39 @@ static void test_unique_append(void)
     imgorg_image_list_destroy(&list);
 }
 
+static void test_tags(void)
+{
+    imgorg_image_entry entry;
+    char normalised[IMGORG_TAG_NAME_CAPACITY];
+    bool changed;
+
+    assert(imgorg_image_entry_init(
+        &entry, "ADFS::HardDisc4.$.Pictures.One", "One",
+        42, 1, 2, 0xB60
+    ));
+    assert(imgorg_tag_name_normalise(
+        normalised, sizeof(normalised), "  Winter holiday  "
+    ));
+    assert(strcmp(normalised, "Winter holiday") == 0);
+    assert(!imgorg_tag_name_normalise(
+        normalised, sizeof(normalised), "bad,tag"
+    ));
+    assert(imgorg_image_entry_add_tag(&entry, "Winter", &changed));
+    assert(changed);
+    assert(strcmp(entry.tags, "Winter") == 0);
+    assert(imgorg_image_entry_add_tag(&entry, "winter", &changed));
+    assert(!changed);
+    assert(imgorg_image_entry_add_tag(&entry, "Landscape", &changed));
+    assert(changed);
+    assert(strcmp(entry.tags, "Winter,Landscape") == 0);
+    assert(imgorg_image_entry_has_tag(&entry, " landscape "));
+    assert(imgorg_image_entry_remove_tag(&entry, "WINTER", &changed));
+    assert(changed);
+    assert(strcmp(entry.tags, "Landscape") == 0);
+    assert(imgorg_image_entry_remove_tag(&entry, "Portrait", &changed));
+    assert(!changed);
+}
+
 static void test_catalog_round_trip(void)
 {
     static const char file_name[] = "build/host/focal_catalog_test";
@@ -167,6 +200,7 @@ int main(void)
     test_filetype_mapping();
     test_append_and_read();
     test_unique_append();
+    test_tags();
     test_catalog_round_trip();
 
     puts("All image-list tests passed.");

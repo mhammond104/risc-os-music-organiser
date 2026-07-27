@@ -56,7 +56,8 @@
 - [x] Filer-style multiple thumbnail selection
 - [x] persistent albums with menu and drag-and-drop membership
 - [x] album navigation, creation, rename and removal
-- [ ] tags
+- [x] persistent tags with multi-selection editing, Inspector controls and
+  sidebar filtering
 - catalogue search
 - catalogue backup and recovery
 

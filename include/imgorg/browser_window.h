@@ -21,13 +21,15 @@ typedef enum imgorg_library_filter_kind {
     IMGORG_LIBRARY_FILTER_FOLDER,
     IMGORG_LIBRARY_FILTER_RATING,
     IMGORG_LIBRARY_FILTER_FAVOURITES,
-    IMGORG_LIBRARY_FILTER_ALBUM
+    IMGORG_LIBRARY_FILTER_ALBUM,
+    IMGORG_LIBRARY_FILTER_TAG
 } imgorg_library_filter_kind;
 
 typedef enum imgorg_album_dialog_mode {
     IMGORG_ALBUM_DIALOG_NONE = 0,
     IMGORG_ALBUM_DIALOG_CREATE,
-    IMGORG_ALBUM_DIALOG_RENAME
+    IMGORG_ALBUM_DIALOG_RENAME,
+    IMGORG_ALBUM_DIALOG_CREATE_TAG
 } imgorg_album_dialog_mode;
 
 typedef struct imgorg_viewer_window {
@@ -77,6 +79,7 @@ typedef struct imgorg_browser_window {
     size_t filter_folder_index;
     unsigned int filter_rating;
     size_t filter_album_index;
+    char filter_tag[IMGORG_TAG_NAME_CAPACITY];
     int layout_width;
     int layout_height;
     int thumbnail_cell_width;
@@ -85,9 +88,15 @@ typedef struct imgorg_browser_window {
     bool context_album_menu;
     size_t context_image_index;
     size_t context_album_index;
+    char tag_names[64][IMGORG_TAG_NAME_CAPACITY];
+    size_t tag_count;
+    char selection_tag_names[64][IMGORG_TAG_NAME_CAPACITY];
+    size_t selection_tag_count;
     imgorg_album_dialog_mode album_dialog_mode;
     size_t album_dialog_index;
     char album_dialog_name[IMGORG_ALBUM_NAME_CAPACITY];
+    char album_dialog_title[32];
+    char album_dialog_label[32];
     bool thumbnail_image_dragging;
     size_t thumbnail_drag_image_index;
     imgorg_directory_scanner scanner;
