@@ -76,3 +76,10 @@ make -f Makefile.host test
 ```
 
 The RISC OS application directory is produced at `app/!Aural`.
+
+## License
+
+Copyright (C) 2026 Broomfield Developments.
+
+`!Aural` is free software licensed under the GNU General Public License,
+version 3. See [LICENSE](LICENSE) for the complete terms.
