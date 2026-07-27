@@ -5,6 +5,7 @@ obj/
 *.d
 *.zip
 app/!Focal/!RunImage
+app/!Aural/!RunImage
 tools/bin/
 
 # Host-side test outputs

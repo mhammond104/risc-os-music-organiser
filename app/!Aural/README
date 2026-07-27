@@ -1,0 +1,8 @@
+!Aural
+======
+
+Native RISC OS music-library manager and player.
+
+This is an early development build forked from !Focal's Wimp foundation.
+Image-specific browser components are temporary while the music catalogue,
+metadata views and playback engine are implemented.

@@ -2,7 +2,7 @@
 
 ## Goals
 
-Focal is intended to feel native to RISC OS rather than imitating a
+Aural is intended to feel native to RISC OS rather than imitating a
 large cross-platform photo-management suite. Its core operations should follow
 normal Wimp conventions: iconbar presence, filer drag-and-drop, menus, separate
 viewer windows and cooperative background work.
@@ -86,7 +86,7 @@ current directory. Visible rows are prioritised over the sequential background
 queue. PNGs use the linked libpng decoder. JPEGs use an embedded EXIF preview
 when present, otherwise libjpeg-turbo's reduced-resolution IDCT before a final
 thumbnail-sized downsample. Completed thumbnails are stored below
-`<Choices$Write>.Focal.Thumbs`; cache keys and headers include the source path,
+`<Choices$Write>.Aural.Thumbs`; cache keys and headers include the source path,
 size and RISC OS timestamp so stale entries are ignored. Native Sprite files are
 loaded into temporary user areas and rendered through SpriteOp into the same
 bounded 32-bpp thumbnail representation before the source area is released.
@@ -95,7 +95,7 @@ bounded 32-bpp thumbnail representation before the source area is released.
 
 `library_catalog.c` stores the folder list, image identities and reserved
 rating, favourite and tag fields in the versioned
-`<Choices$Write>.Focal.Library` file. Catalogue writes use a temporary sibling
+`<Choices$Write>.Aural.Library` file. Catalogue writes use a temporary sibling
 and rename, while malformed input is rejected without touching source images.
 
 ## Error handling

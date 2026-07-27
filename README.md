@@ -1,173 +1,78 @@
-# Focal
+# Aural
 
-A native RISC OS image browser, viewer and lightweight collection organiser.
+`!Aural` is a native RISC OS music-library browser, manager, organiser and
+player inspired by the clarity of classic iTunes while retaining a proper
+RISC OS Wimp appearance.
 
-## Download
+The project is based on the proven application and catalogue architecture of
+`!Focal`. Shared ideas include the fixed three-pane workspace, persistent
+non-destructive library, ratings, favourites, multi-selection and
+collections. Aural is being given a music-specific catalogue and playback
+model rather than treating audio files as another image format.
 
-The packaged RISC OS application is available as
-[`dist/!Focal.zip`](dist/!Focal.zip). The ZIP preserves the application
-directory's RISC OS filetypes.
+## Intended workspace
+
+- Left: artist navigation, plus Library, Genres, Playlists, ratings and
+  favourites.
+- Centre: album artwork for the selected artist or library section.
+- Right: the selected album's ordered track list.
+- Playback strip: previous, play/pause, next, progress, volume and now-playing
+  information.
+
+Metadata editing is opened explicitly for the selected track or album rather
+than permanently occupying the track-list panel.
+
+The primary action is to play or queue a track. Library removal is
+catalogue-only and must never delete the source audio file.
+
+All Albums, Recently Added, artist and genre selections retain the album-art
+browser. Selecting a playlist switches the centre pane to an ordered track
+table. Tracks can be added through their Menu-click submenu or by dragging
+them onto a playlist; playlists can be created, renamed and removed without
+affecting source audio.
+
+Search accepts comma-separated terms and matches every term across title,
+artist, album artist, album, genre, comments and source path. Search results,
+ratings, favourites, playlists and the persistent play queue use the expanded
+central track-table view. Long navigation, album and track lists scroll
+independently according to the pane beneath the pointer.
+
+Tracks support Filer-style Adjust-click multi-selection. Playlist and queue
+addition, ratings, favourites, playlist removal and safe library removal
+apply to the selected group.
+
+The transport reads authoritative status, elapsed time, duration and volume
+from AMPlayer and provides seeking, volume, shuffle and repeat. Track
+menus also provide Play Next, Add to Queue, safe catalogue-only removal,
+Filer reveal and relinking for missing source files.
+
+As in `!Focal`, dragging a directory onto the iconbar icon or main window adds
+it persistently to the library. Aural scans imported music sources
+incrementally and prevents duplicate path entries.
 
 ## Current status
 
-This repository contains the first application milestone:
+The repository has been forked from the stable `!Focal` Wimp foundation.
+`!Aural` has its own application identity, application directory and
+`<Choices$Write>.Aural` catalogue namespace. Work is beginning on the portable
+music metadata model before the inherited image-browser components are
+replaced.
 
-- native OSLib Wimp application
-- custom resolution-aware application and iconbar icon
-- iconbar menu with Quit
-- browser window shell
-- persistent folder and individual-image library imports
-- incremental enumeration of JPEG, PNG and Sprite files
-- progressive PNG, JPEG and Sprite thumbnails
-- responsive three-pane library workspace with selection inspector
-- Filer-style multiple selection, ratings, favourites and persistent Albums
-- drag-and-drop loading and fit-to-window display of PNG and JPEG images
-- clean `Message_Quit` handling
-- portable image-list and directory-entry model
-- host-side unit tests for the portable model
-- RISC OS application-directory packaging
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the implementation sequence.
 
-Directory contents are enumerated incrementally during null-event time. PNG and
-JPEG thumbnails are progressively decoded into bounded in-memory sprites, with
-visible rows processed first. JPEGs use an embedded EXIF preview when available;
-generated thumbnails are cached below `<Choices$Write>.Focal.Thumbs` for later
-visits. Native Sprite files are loaded through SpriteOp and rendered into the
-same bounded thumbnail format. Full PNG and JPEG display is decoded by the
-statically linked image libraries and plotted as a native RISC OS sprite.
-The large, theme-aware main Focal window places library and organisation
-controls to the left of a responsive thumbnail canvas, with selected-file
-information on the right. Imported folders, images and future organisation
-metadata are stored in `<Choices$Write>.Focal.Library`.
+## Building
 
-## Intended features
-
-- scrollable thumbnail browser
-- JPEG, PNG and Sprite support
-- full-size image viewer
-- zoom, pan, fit-to-window and previous/next navigation
-- ratings, favourites and tags
-- persistent thumbnail cache
-- albums and search
-- file operations through normal RISC OS conventions
-
-## Repository layout
-
-```text
-app/!Focal/        RISC OS application directory
-dist/              Packaged RISC OS application download
-assets/            Original artwork used to generate application sprites
-src/               Native application source
-include/imgorg/     Public project headers
-tests/             Portable host-side tests
-docs/              Architecture and roadmap
-tools/             Windows deployment and sprite-generation helpers
-Makefile            RISC OS cross-build
-Makefile.host       Host-side tests
-```
-
-The application directory is named `!Focal`. The internal C module namespace
-still uses `imgorg` to keep the current public headers stable.
-
-## Requirements
-
-For a RISC OS build:
-
-- GCCSDK cross-compiler
-- OSLib
-- libpng 1.6, libjpeg-turbo and zlib built for the GCCSDK environment
-- GNU Make
-
-The Makefile assumes the compiler is available as:
+The RISC OS cross-build uses GCCSDK, OSLib and the existing static application
+pipeline:
 
 ```sh
-arm-unknown-riscos-gcc
+make all
 ```
 
-It also uses `GCCSDK_INSTALL_ENV` to find the installed OSLib headers and
-libraries. For a typical shell session, set:
-
-```sh
-export GCCSDK_INSTALL_CROSSBIN=/path/to/gccsdk/cross/bin
-export GCCSDK_INSTALL_ENV=/path/to/gccsdk/env
-export PATH="$GCCSDK_INSTALL_CROSSBIN:$PATH"
-```
-
-Override it when necessary:
-
-```sh
-make CC=/path/to/arm-unknown-riscos-gcc
-```
-
-## Build
-
-```sh
-make
-```
-
-The executable is written to:
-
-```text
-app/!Focal/!RunImage
-```
-
-Copy the complete `app/!Focal` directory to a RISC OS filesystem preserving
-RISC OS filetypes. How filetypes are represented depends on the transfer method
-and emulator/tooling in use.
-
-## Open an image
-
-Launch Focal, then drag one or more directories or supported images into its
-library window to add them persistently. Dropping an image on the iconbar opens
-it directly in a viewer without adding it to the library. Double-clicking PNG
-or JPEG thumbnails opens independent image viewers,
-leaving the populated browser open alongside them. Opening an image that is
-already displayed brings its viewer to the front. Dropping an image onto an
-existing viewer replaces only that viewer; dropping onto the iconbar or browser
-opens another. Each viewer has independent fit, zoom and pan state. Closing a
-viewer does not disturb the library browser or other viewers.
-Single-clicking a thumbnail highlights its cell, and a loading window remains
-visible while a full-resolution image is decoded. Viewer windows are created on
-demand rather than limited to a fixed count. Before decoding another image, the
-application checks its estimated peak memory requirement against the 128 MB Wimp
-slot and asks the user to close viewers if the image would not fit safely.
-Directory browsers show real PNG, JPEG and Sprite thumbnails.
-
-The Library panel filters the grid by all photographs, imported folder, exact
-1–5-star rating or favourites. Menu-click a thumbnail for Open and
-Remove from library. Removal changes only Focal's catalogue and never deletes
-the source image. A folder disappears from the panel when its last library
-image is removed.
-
-With an image open:
-
-- use the toolbar arrows or Left/Right keys to navigate the current directory
-- use the `100%` toolbar button for actual size
-- use the `Fit` toolbar button for fit-to-window display
-- use the `Full Screen` toolbar button to toggle desktop-sized viewing
-- press `T` to show or hide that viewer's toolbar
-- use the mouse wheel over the window to zoom from 10% to 800%
-- Select-drag the image to pan it
-- Adjust-click the image to return to fit-to-window
-
-## Run portable tests
-
-The model and image-list code deliberately avoid RISC OS dependencies.
+Portable host-side model tests use:
 
 ```sh
 make -f Makefile.host test
 ```
 
-## GitHub setup
-
-```sh
-git init
-git branch -M main
-git add .
-git commit -m "Add initial Focal application shell"
-git remote add origin git@github.com:YOUR-USER/risc-os-image-organiser.git
-git push -u origin main
-```
-
-## Licence
-
-GPL-3.0-or-later. See `LICENSE`.
+The RISC OS application directory is produced at `app/!Aural`.

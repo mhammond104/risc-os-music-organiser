@@ -7,7 +7,7 @@
 static void report_error(const os_error *error)
 {
     if (error != NULL) {
-        fprintf(stderr, "Focal: %s\n", error->errmess);
+        fprintf(stderr, "Aural: %s\n", error->errmess);
     }
 }
 

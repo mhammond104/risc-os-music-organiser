@@ -61,8 +61,8 @@ enum {
     ALBUM_DIALOG_HEIGHT = 180
 };
 
-static const char IMGORG_LIBRARY_DIRECTORY[] = "<Choices$Write>.Focal";
-static const char IMGORG_LIBRARY_FILE[] = "<Choices$Write>.Focal.Library";
+static const char IMGORG_LIBRARY_DIRECTORY[] = "<Choices$Write>.Aural";
+static const char IMGORG_LIBRARY_FILE[] = "<Choices$Write>.Aural.Library";
 static char IMGORG_EMPTY_ICON_TEXT[] = "";
 static char IMGORG_BORDER_SLAB_OUT[] = "R1";
 static char IMGORG_BORDER_SLAB_IN[] = "R2";
@@ -1173,7 +1173,7 @@ static os_error *imgorg_browser_window_update_title(
         snprintf(
             browser->title,
             sizeof(browser->title),
-            "Focal - %lu image%s - Adding %.48s",
+            "Aural - %lu image%s - Adding %.48s",
             (unsigned long) browser->images.count,
             browser->images.count == 1 ? "" : "s",
             browser->directory_name
@@ -1182,7 +1182,7 @@ static os_error *imgorg_browser_window_update_title(
         snprintf(
             browser->title,
             sizeof(browser->title),
-            "Focal - %lu image%s",
+            "Aural - %lu image%s",
             (unsigned long) browser->images.count,
             browser->images.count == 1 ? "" : "s"
         );
@@ -1262,7 +1262,7 @@ static os_error *imgorg_browser_window_save_library(
             &browser->albums
         )) {
         return imgorg_browser_window_error(
-            "The Focal library catalogue could not be saved"
+            "The Aural library catalogue could not be saved"
         );
     }
     browser->library_dirty = false;
@@ -1441,7 +1441,7 @@ static osspriteop_area *imgorg_browser_window_decode_png(
 
     sprite = (osspriteop_header *) ((byte *) area + area->first);
     sprite->size = sizeof(*sprite) + (int) output_pixel_bytes;
-    memcpy(sprite->name, "focal", 6);
+    memcpy(sprite->name, "aural", 6);
     sprite->width = output_width - 1;
     sprite->height = output_height - 1;
     sprite->left_bit = 0;
@@ -1578,7 +1578,7 @@ static osspriteop_area *imgorg_browser_window_create_sprite(
 
     sprite = (osspriteop_header *) ((byte *) area + area->first);
     sprite->size = sizeof(*sprite) + (int) pixel_bytes;
-    memcpy(sprite->name, "focal", 6);
+    memcpy(sprite->name, "aural", 6);
     sprite->width = width - 1;
     sprite->height = height - 1;
     sprite->left_bit = 0;
@@ -2740,7 +2740,7 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
         imgorg_album_list_destroy(&browser->albums);
         imgorg_image_list_destroy(&browser->images);
         return imgorg_browser_window_error(
-            "The Focal library catalogue could not be read"
+            "The Aural library catalogue could not be read"
         );
     }
     /*
@@ -2857,7 +2857,7 @@ os_error *imgorg_browser_window_create(imgorg_browser_window *browser)
     snprintf(
         loading_definition.title_data.text,
         sizeof(loading_definition.title_data.text),
-        "Focal"
+        "Aural"
     );
     loading_definition.work_flags =
         wimp_BUTTON_NEVER << wimp_ICON_BUTTON_TYPE_SHIFT;
@@ -3528,7 +3528,7 @@ os_error *imgorg_browser_window_add_image(
         ) ||
         entry.format == IMGORG_IMAGE_FORMAT_UNKNOWN) {
         return imgorg_browser_window_error(
-            "Focal can only add Sprite, JPEG and PNG images"
+            "Aural can only add Sprite, JPEG and PNG images"
         );
     }
     if (!imgorg_image_list_append_unique(&browser->images, &entry, &added)) {
@@ -6429,7 +6429,7 @@ static os_error *imgorg_browser_window_plot_workspace_chrome(
         }
         return imgorg_browser_window_paint_workspace_text(
             browser->images.count == 0 ?
-                "They will remain available the next time Focal starts" :
+                "They will remain available the next time Aural starts" :
                 "Choose another section from the Library panel",
             centre_x,
             centre_y - 52

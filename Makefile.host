@@ -3,9 +3,10 @@ CPPFLAGS := -Iinclude
 CFLAGS ?= -O2 -Wall -Wextra -Wpedantic -std=c11
 
 BUILD_DIR := build/host
-TEST_TARGET := $(BUILD_DIR)/test_image_list
+IMAGE_TEST_TARGET := $(BUILD_DIR)/test_image_list
+TRACK_TEST_TARGET := $(BUILD_DIR)/test_track_entry
 
-TEST_SOURCES := \
+IMAGE_TEST_SOURCES := \
 	tests/test_image_list.c \
 	src/image_entry.c \
 	src/image_list.c \
@@ -13,12 +14,18 @@ TEST_SOURCES := \
 
 .PHONY: test clean
 
-test: $(TEST_TARGET)
-	$(TEST_TARGET)
+test: $(IMAGE_TEST_TARGET) $(TRACK_TEST_TARGET)
+	$(IMAGE_TEST_TARGET)
+	$(TRACK_TEST_TARGET)
 
-$(TEST_TARGET): $(TEST_SOURCES)
+$(IMAGE_TEST_TARGET): $(IMAGE_TEST_SOURCES)
 	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_SOURCES) -o $@
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(IMAGE_TEST_SOURCES) -o $@
+
+$(TRACK_TEST_TARGET): tests/test_track_entry.c src/track_entry.c \
+	src/track_catalog.c src/audio_probe.c src/metadata_write.c src/playlist.c
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ -o $@
 
 clean:
 	rm -rf $(BUILD_DIR)

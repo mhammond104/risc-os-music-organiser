@@ -8,17 +8,20 @@ LDLIBS ?= -lpng16 -ljpeg -lz -lOSLib32
 BUILD_DIR := build/riscos
 ELF_TARGET := $(BUILD_DIR)/RunImage.elf
 AIF_TARGET := $(BUILD_DIR)/RunImage.aif
-TARGET := app/!Focal/!RunImage
+TARGET := app/!Aural/!RunImage
 
 SOURCES := \
 	src/main.c \
 	src/application.c \
-	src/browser_window.c \
-	src/directory_scanner.c \
-	src/image_entry.c \
-	src/image_list.c \
-	src/library_catalog.c \
-	src/thumbnail_cache.c
+	src/artwork.c \
+	src/audio_probe.c \
+	src/library_window.c \
+	src/metadata_write.c \
+	src/music_scanner.c \
+	src/playlist.c \
+	src/player.c \
+	src/track_catalog.c \
+	src/track_entry.c
 
 OBJECTS := $(SOURCES:src/%.c=$(BUILD_DIR)/%.o)
 DEPS := $(OBJECTS:.o=.d)
@@ -42,7 +45,7 @@ $(BUILD_DIR)/%.o: src/%.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -MMD -MP -c $< -o $@
 
 package: all
-	@echo "Built RISC OS application directory: app/!Focal"
+	@echo "Built RISC OS application directory: app/!Aural"
 
 clean:
 	rm -rf build

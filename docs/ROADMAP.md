@@ -1,70 +1,72 @@
-# Roadmap
+# !Aural roadmap
 
-## 0.1 — browser foundation
+## 0.1 — native application foundation
 
-- [x] Wimp application registration
-- [x] iconbar presence
-- [x] browser window shell
-- [x] redraw loop
-- [x] portable image-list model
-- [x] iconbar menu
-- [x] application sprites
-- [x] directory drag-and-drop
-- [x] incremental directory enumeration
-- [x] thumbnail placeholders laid out from real directory entries
+- [x] fork the proven !Focal OSLib/Wimp application shell
+- [x] separate !Aural application identity and Choices catalogue
+- [x] replace the inherited image workspace with a dedicated music UI
+- [x] initial three-pane artist → album-art → track-list workspace
+- [ ] alternate Songs and album-grid library views
 
-## 0.2 — thumbnails
+## 0.2 — music catalogue
 
-- [x] Sprite thumbnail loading
-- [x] JPEG thumbnail decoding
-- [x] PNG thumbnail decoding
-- [x] progressive thumbnail queue
-- [x] memory thumbnail store
-- [x] persistent thumbnail cache
-- [x] selectable thumbnail cells
+- [x] portable track-entry and dynamic collection model
+- [x] versioned atomic music catalogue with complete metadata round-tripping
+- [x] persistent recursive drag-directory and individual-track import inherited from
+  !Focal
+- [x] RISC OS filetype and extension-based audio format detection
+- [x] editable title, artist, album, album artist, track/disc number, year,
+  genre and comments
+- [x] atomic MP3 ID3v2 metadata write-back with unrelated-frame preservation
+- [x] initial duration, sample rate, channel count, bitrate and source-path
+  extraction for MP3 and WAV
+- [x] ratings and favourites
+- [x] persistent manual playlists with drag/drop, menus and ordering
+- [ ] smart playlists
+- [x] multi-term catalogue search across music metadata
+- [x] Adjust-click track multi-selection and bulk library actions
 
-## 0.3 — viewer
+## 0.3 — artwork and browsing
 
-- [x] multiple independent image-viewer windows
-- [x] dynamic viewer allocation within the 128 MB Wimp slot
-- [x] open PNG and JPEG thumbnails in the viewer
-- [x] fit-to-window mode
-- [x] zoom and pan
-- [x] hideable viewer toolbar and keyboard shortcuts
-- [x] centred unconstrained viewer windows and fullscreen toggle
-- [ ] remove viewer scroll bars; panning provides navigation within zoomed images
-- [x] previous/next navigation
-- [ ] rotate for display
-- [ ] reveal in Filer
+- [ ] embedded and sidecar cover-art discovery
+- [x] persistent manual PNG/JPEG album-art assignment by Filer drag-and-drop
+- [x] managed Choices artwork copies and album-level artwork removal
+- [x] in-memory native sprite artwork thumbnail cache
+- [x] adjustable album thumbnail sizing and responsive grid
+- [ ] album grouping and compilation handling
+- [x] Artists, All Albums, Genres and Recently Added navigation
+- [x] ordered, selectable album track list with number, title and duration
+- [x] independently scrollable long navigation, album and track views
+- [ ] sortable columns in the alternate Songs view
+- [ ] multi-selection metadata editing
+- [x] album-wide title, album artist, year and genre editor
+- [x] at-a-glance selected-track metadata inspector
 
-## 0.4 — organisation
+## 0.4 — playback
 
-- [x] three-pane library workspace shell
-- [x] persistent library catalogue
-- [x] add folders and individual images through Filer drag-and-drop
-- [x] catalogue fields reserved for ratings, favourites and tags
-- [x] theme-aware bevelled workspace presentation
-- [x] star ratings
-- [x] favourites
-- [x] library and folder navigation filters
-- [x] exact 1–5-star navigation filters
-- [x] thumbnail context menu and catalogue-only removal
-- [x] unconstrained browser resizing with fixed scrolling side panels
-- [x] opaque fixed thumbnail-view header
-- [x] proportional centred initial library-window geometry
-- [x] responsive thumbnail columns and thumbnail-size slider
-- [x] Filer-style multiple thumbnail selection
-- [x] persistent albums with menu and drag-and-drop membership
-- [x] album navigation, creation, rename and removal
-- [x] persistent tags with multi-selection editing, Inspector controls and
-  sidebar filtering
-- catalogue search
-- catalogue backup and recovery
+- [x] initial native MP3 backend using AMPlayer
+- [x] play, pause/resume, stop, previous and next
+- [x] seek and volume controls
+- [x] persistent play queue
+- [x] shuffle and repeat modes
+- [ ] now-playing display with artwork and metadata (metadata complete)
+- [x] bottom transport and now-playing strip
+- [x] playback continues while the library is browsed
+- [x] authoritative AMPlayer status, position, duration and volume polling
+
+## 0.5 — library safety
+
+- [ ] catalogue backup and recovery
+- [x] missing-file detection and relinking
+- [x] reveal track in Filer
+- [x] remove from library without deleting source audio
+- [ ] optional metadata write-back with explicit confirmation
 
 ## Later
 
-- slideshow
-- contact sheets
+- gapless playback
+- ReplayGain
+- internet radio
+- CD import
 - duplicate detection
-- additional formats
 - plugin or converter integration

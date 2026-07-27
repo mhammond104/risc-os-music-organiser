@@ -1,0 +1,5 @@
+Set Aural$Dir <Obey$Dir>
+IconSprites <Aural$Dir>.!Sprites
+WimpSlot -min 2048K -max 128M
+RMEnsure AMPlayer 1.38 RMLoad System:Modules.Audio.MP3.AMPlayer
+Run <Aural$Dir>.!RunImage
